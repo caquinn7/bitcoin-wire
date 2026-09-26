@@ -239,11 +239,12 @@ file/timer/CLI behavior, or a runtime-specific bug.
   `test/btc_parser/transaction/`; real transaction wire examples are stored in
   `test/btc_parser/transaction/fixtures/` and exercised by
   `fixture_test.gleam`.
-  Block behavior is covered by `block_test.gleam`,
-  `compute_merkle_root_test.gleam`, `pow_limit_test.gleam`,
-  `validate_context_free_consensus_test.gleam`, and `fixture_test.gleam` under
-  `test/btc_parser/block/`; real mainnet block examples are stored in its
-  `fixtures/` directory.
+  Block behavior is covered by `deserialize_test.gleam`,
+  `deserialize_with_policy_test.gleam`,
+  `serialization_and_identifiers_test.gleam`, `compute_merkle_root_test.gleam`,
+  `pow_limit_test.gleam`, `validate_context_free_consensus_test.gleam`, and
+  `fixture_test.gleam` under `test/btc_parser/block/`; real mainnet block
+  examples are stored in its `fixtures/` directory.
 - Test both success and exact failure shape for transaction and block
   deserializer changes: error kind, offset, and context stack.
 - Include boundary tests for limits: exactly at limit, one over limit, truncated

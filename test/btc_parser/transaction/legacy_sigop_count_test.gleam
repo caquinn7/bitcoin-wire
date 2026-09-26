@@ -1,11 +1,7 @@
 import btc_parser/transaction
 import gleam/bit_array
 import gleam/list
-import support/bitcoin_wire.{compact_size}
-import support/transaction_wire.{
-  assemble_segwit_transaction_bytes, build_input_bytes, build_output_bytes,
-  repeat_byte, transaction_version_1_bytes,
-}
+import support/bitcoin_wire
 
 // ============================================================================
 // Basic counting and aggregation
@@ -45,7 +41,7 @@ pub fn legacy_sigop_count_skips_direct_push_payloads_test() {
 }
 
 pub fn legacy_sigop_count_skips_direct_push_payloads_of_maximum_length_test() {
-  let pushed_sigops = repeat_byte(0xAC, 75)
+  let pushed_sigops = bitcoin_wire.repeat_byte(0xAC, 75)
   let script = <<0xAC, 75, pushed_sigops:bits, 0xAC>>
 
   assert compute_legacy_sigop_count([<<>>], [script]) == 2
@@ -58,7 +54,7 @@ pub fn legacy_sigop_count_skips_pushdata1_payloads_test() {
 }
 
 pub fn legacy_sigop_count_skips_pushdata2_payloads_test() {
-  let pushed_sigops = repeat_byte(0xAC, 256)
+  let pushed_sigops = bitcoin_wire.repeat_byte(0xAC, 256)
   let script = <<0xAC, 0x4D, 256:little-size(16), pushed_sigops:bits, 0xAC>>
 
   assert compute_legacy_sigop_count([<<>>], [script]) == 2
@@ -66,7 +62,7 @@ pub fn legacy_sigop_count_skips_pushdata2_payloads_test() {
 
 pub fn legacy_sigop_count_skips_pushdata4_payloads_test() {
   // This is intentionally a non-minimal encoding for a 256-byte push.
-  let pushed_sigops = repeat_byte(0xAC, 256)
+  let pushed_sigops = bitcoin_wire.repeat_byte(0xAC, 256)
   let script = <<0xAC, 0x4E, 256:little-size(32), pushed_sigops:bits, 0xAC>>
 
   assert compute_legacy_sigop_count([<<>>], [script]) == 2
@@ -116,24 +112,32 @@ pub fn legacy_sigop_count_stops_at_a_truncated_pushdata4_payload_test() {
 // ============================================================================
 
 pub fn legacy_sigop_count_ignores_witness_items_test() {
-  let input = build_input_bytes(repeat_byte(0x01, 32), 0, <<0xAC>>, 0)
-  let output = build_output_bytes(<<0:little-size(64)>>, <<>>)
+  let input =
+    bitcoin_wire.build_input_bytes(
+      bitcoin_wire.repeat_byte(0x01, 32),
+      0,
+      <<0xAC>>,
+      0,
+    )
+  let output = bitcoin_wire.build_output_bytes(<<0:little-size(64)>>, <<>>)
   let witness_item = <<0xAC, 0xAD, 0xAE, 0xAF>>
   let witness_stack = <<
-    compact_size(1):bits,
-    compact_size(bit_array.byte_size(witness_item)):bits,
+    bitcoin_wire.compact_size(1):bits,
+    bitcoin_wire.compact_size(bit_array.byte_size(witness_item)):bits,
     witness_item:bits,
   >>
   let tx =
     deserialize_transaction(
-      assemble_segwit_transaction_bytes([input], [output], [witness_stack]),
+      bitcoin_wire.assemble_segwit_transaction_bytes([input], [output], [
+        witness_stack,
+      ]),
     )
 
   assert transaction.compute_legacy_sigop_count(tx) == 1
 }
 
 pub fn legacy_sigop_count_handles_ten_thousand_sigops_without_recursion_overflow_test() {
-  let script = repeat_byte(0xAC, 10_000)
+  let script = bitcoin_wire.repeat_byte(0xAC, 10_000)
   assert compute_legacy_sigop_count([<<>>], [script]) == 10_000
 }
 
@@ -167,18 +171,23 @@ fn build_legacy_transaction_bytes(
   let inputs =
     input_scripts
     |> list.index_map(fn(bytes, i) {
-      build_input_bytes(repeat_byte(i + 1, 32), i, bytes, 0)
+      bitcoin_wire.build_input_bytes(
+        bitcoin_wire.repeat_byte(i + 1, 32),
+        i,
+        bytes,
+        0,
+      )
     })
 
   let outputs =
     output_scripts
-    |> list.map(build_output_bytes(<<0:little-size(64)>>, _))
+    |> list.map(bitcoin_wire.build_output_bytes(<<0:little-size(64)>>, _))
 
   <<
-    transaction_version_1_bytes:bits,
-    compact_size(list.length(inputs)):bits,
+    bitcoin_wire.transaction_version_1_bytes:bits,
+    bitcoin_wire.compact_size(list.length(inputs)):bits,
     bit_array.concat(inputs):bits,
-    compact_size(list.length(outputs)):bits,
+    bitcoin_wire.compact_size(list.length(outputs)):bits,
     bit_array.concat(outputs):bits,
     0:little-size(32),
   >>

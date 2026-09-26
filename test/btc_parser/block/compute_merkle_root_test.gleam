@@ -6,10 +6,7 @@ import gleam/crypto.{Sha256}
 import gleam/list
 import gleam/string
 import simplifile
-import support/bitcoin_wire.{compact_size}
-import support/transaction_wire.{
-  build_minimal_legacy_transaction_bytes, build_minimal_segwit_transaction_bytes,
-}
+import support/bitcoin_wire
 
 // ============================================================================
 // Core computation
@@ -22,7 +19,7 @@ pub fn compute_merkle_root_for_empty_block_is_zero_and_not_mutated_test() {
 }
 
 pub fn compute_merkle_root_for_single_legacy_transaction_is_its_txid_test() {
-  let tx_bytes = build_minimal_legacy_transaction_bytes(1)
+  let tx_bytes = bitcoin_wire.build_minimal_legacy_transaction_bytes(1)
   let assert Ok(tx) = transaction.deserialize(tx_bytes)
   let parsed_block = deserialize_zero_header_block([tx_bytes])
 
@@ -35,7 +32,7 @@ pub fn compute_merkle_root_for_single_legacy_transaction_is_its_txid_test() {
 }
 
 pub fn compute_merkle_root_for_single_segwit_transaction_uses_txid_not_wtxid_test() {
-  let tx_bytes = build_minimal_segwit_transaction_bytes()
+  let tx_bytes = bitcoin_wire.build_minimal_segwit_transaction_bytes()
   let assert Ok(tx) = transaction.deserialize(tx_bytes)
 
   let txid = transaction.compute_txid(tx)
@@ -48,8 +45,8 @@ pub fn compute_merkle_root_for_single_segwit_transaction_uses_txid_not_wtxid_tes
 }
 
 pub fn compute_merkle_root_for_two_unique_transactions_hashes_their_txids_test() {
-  let tx_a_bytes = build_minimal_legacy_transaction_bytes(1)
-  let tx_b_bytes = build_minimal_legacy_transaction_bytes(2)
+  let tx_a_bytes = bitcoin_wire.build_minimal_legacy_transaction_bytes(1)
+  let tx_b_bytes = bitcoin_wire.build_minimal_legacy_transaction_bytes(2)
 
   let txid_a = compute_txid(tx_a_bytes)
   let txid_b = compute_txid(tx_b_bytes)
@@ -61,9 +58,9 @@ pub fn compute_merkle_root_for_two_unique_transactions_hashes_their_txids_test()
 }
 
 pub fn compute_merkle_root_for_three_unique_transactions_pads_without_mutation_test() {
-  let tx_a_bytes = build_minimal_legacy_transaction_bytes(1)
-  let tx_b_bytes = build_minimal_legacy_transaction_bytes(2)
-  let tx_c_bytes = build_minimal_legacy_transaction_bytes(3)
+  let tx_a_bytes = bitcoin_wire.build_minimal_legacy_transaction_bytes(1)
+  let tx_b_bytes = bitcoin_wire.build_minimal_legacy_transaction_bytes(2)
+  let tx_c_bytes = bitcoin_wire.build_minimal_legacy_transaction_bytes(3)
 
   let txid_a = compute_txid(tx_a_bytes)
   let txid_b = compute_txid(tx_b_bytes)
@@ -84,7 +81,7 @@ pub fn compute_merkle_root_for_three_unique_transactions_pads_without_mutation_t
 // ============================================================================
 
 pub fn compute_merkle_root_marks_an_actual_identical_leaf_pair_as_mutated_test() {
-  let tx_a_bytes = build_minimal_legacy_transaction_bytes(1)
+  let tx_a_bytes = bitcoin_wire.build_minimal_legacy_transaction_bytes(1)
   let txid_a = compute_txid(tx_a_bytes)
 
   let parsed_block = deserialize_zero_header_block([tx_a_bytes, tx_a_bytes])
@@ -94,9 +91,9 @@ pub fn compute_merkle_root_marks_an_actual_identical_leaf_pair_as_mutated_test()
 }
 
 pub fn compute_merkle_root_distinguishes_padding_from_an_identical_leaf_pair_test() {
-  let tx_a_bytes = build_minimal_legacy_transaction_bytes(1)
-  let tx_b_bytes = build_minimal_legacy_transaction_bytes(2)
-  let tx_c_bytes = build_minimal_legacy_transaction_bytes(3)
+  let tx_a_bytes = bitcoin_wire.build_minimal_legacy_transaction_bytes(1)
+  let tx_b_bytes = bitcoin_wire.build_minimal_legacy_transaction_bytes(2)
+  let tx_c_bytes = bitcoin_wire.build_minimal_legacy_transaction_bytes(3)
 
   let txid_a = compute_txid(tx_a_bytes)
   let txid_b = compute_txid(tx_b_bytes)
@@ -122,8 +119,8 @@ pub fn compute_merkle_root_distinguishes_padding_from_an_identical_leaf_pair_tes
 }
 
 pub fn compute_merkle_root_marks_identical_parent_hashes_as_mutated_test() {
-  let tx_a_bytes = build_minimal_legacy_transaction_bytes(1)
-  let tx_b_bytes = build_minimal_legacy_transaction_bytes(2)
+  let tx_a_bytes = bitcoin_wire.build_minimal_legacy_transaction_bytes(1)
+  let tx_b_bytes = bitcoin_wire.build_minimal_legacy_transaction_bytes(2)
 
   let txid_a = compute_txid(tx_a_bytes)
   let txid_b = compute_txid(tx_b_bytes)
@@ -188,11 +185,7 @@ fn assert_fixture_merkle_root(fixture: MainnetFixture) -> Nil {
 fn deserialize_zero_header_block(
   transactions: List(BitArray),
 ) -> Block(Parsed) {
-  let bytes = <<
-    0:size(640),
-    compact_size(list.length(transactions)):bits,
-    bit_array.concat(transactions):bits,
-  >>
+  let bytes = bitcoin_wire.assemble_block_bytes(<<0:size(640)>>, transactions)
   let assert Ok(parsed_block) = block.deserialize(bytes)
 
   parsed_block

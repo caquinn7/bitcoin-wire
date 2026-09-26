@@ -5,16 +5,10 @@ import btc_parser/transaction.{
   SuperfluousWitnessRecord, TrailingBytes, UnexpectedEof,
 }
 import gleam/bit_array
-import support/bitcoin_wire.{compact_size}
+import support/bitcoin_wire
+import support/decode_assertions
 import support/offset_bit_array
 import support/target
-import support/transaction_assertions.{check_transaction_decode_error}
-import support/transaction_wire.{
-  assemble_segwit_transaction_bytes, build_input_bytes,
-  build_minimal_input_section_bytes, build_minimal_legacy_transaction_bytes,
-  build_minimal_output_section_bytes, build_output_bytes, min_input_size_bytes,
-  min_output_size_bytes, repeat_byte, transaction_version_1_bytes,
-}
 
 // ============================================================================
 // deserialize_hex: invalid hex input
@@ -38,21 +32,27 @@ pub fn deserialize_hex_errors_on_string_with_whitespace_test() {
 
 pub fn deserialize_version_at_signed_max_as_unsigned_test() {
   let assert Ok(result) =
-    transaction.deserialize(build_minimal_legacy_transaction_bytes(0x7FFFFFFF))
+    transaction.deserialize(bitcoin_wire.build_minimal_legacy_transaction_bytes(
+      0x7FFFFFFF,
+    ))
 
   assert transaction.get_version(result) == 2_147_483_647
 }
 
 pub fn deserialize_version_above_signed_max_as_unsigned_test() {
   let assert Ok(result) =
-    transaction.deserialize(build_minimal_legacy_transaction_bytes(0x80000000))
+    transaction.deserialize(bitcoin_wire.build_minimal_legacy_transaction_bytes(
+      0x80000000,
+    ))
 
   assert transaction.get_version(result) == 2_147_483_648
 }
 
 pub fn deserialize_max_unsigned_version_as_unsigned_test() {
   let assert Ok(result) =
-    transaction.deserialize(build_minimal_legacy_transaction_bytes(0xFFFFFFFF))
+    transaction.deserialize(bitcoin_wire.build_minimal_legacy_transaction_bytes(
+      0xFFFFFFFF,
+    ))
 
   assert transaction.get_version(result) == 4_294_967_295
 }
@@ -60,7 +60,11 @@ pub fn deserialize_max_unsigned_version_as_unsigned_test() {
 pub fn deserialize_errors_on_empty_string_test() {
   let assert Error(DecodeFailed(decode_err)) = transaction.deserialize_hex("")
 
-  assert check_transaction_decode_error(decode_err, 0, "transaction.version")
+  assert decode_assertions.check_transaction_decode_error(
+      decode_err,
+      0,
+      "transaction.version",
+    )
     == UnexpectedEof(bytes_needed: 4, remaining: 0)
 }
 
@@ -68,25 +72,33 @@ pub fn deserialize_errors_when_input_shorter_than_4_bytes_test() {
   let assert Error(DecodeFailed(decode_err)) =
     transaction.deserialize_hex("010203")
 
-  assert check_transaction_decode_error(decode_err, 0, "transaction.version")
+  assert decode_assertions.check_transaction_decode_error(
+      decode_err,
+      0,
+      "transaction.version",
+    )
     == UnexpectedEof(4, 3)
 }
 
 pub fn deserialize_errors_on_non_byte_aligned_input_test() {
-  let valid_bytes = build_minimal_legacy_transaction_bytes(1)
+  let valid_bytes = bitcoin_wire.build_minimal_legacy_transaction_bytes(1)
   let unaligned = <<valid_bytes:bits, 0:1>>
 
   let assert Error(decode_err) = transaction.deserialize(unaligned)
 
-  assert check_transaction_decode_error(decode_err, 0, "transaction")
+  assert decode_assertions.check_transaction_decode_error(
+      decode_err,
+      0,
+      "transaction",
+    )
     == NonByteAlignedInput(bit_array.bit_size(unaligned))
 }
 
 pub fn deserialize_does_not_misclassify_segwit_when_marker_and_flag_are_missing_test() {
   let assert Error(decode_err) =
-    transaction.deserialize(transaction_version_1_bytes)
+    transaction.deserialize(bitcoin_wire.transaction_version_1_bytes)
 
-  assert check_transaction_decode_error(
+  assert decode_assertions.check_transaction_decode_error(
       decode_err,
       4,
       "transaction.inputs.count",
@@ -98,9 +110,12 @@ pub fn deserialize_does_not_misclassify_segwit_when_marker_and_flag_are_truncate
   let marker = <<0:size(8)>>
 
   let assert Error(decode_err) =
-    transaction.deserialize(<<transaction_version_1_bytes:bits, marker:bits>>)
+    transaction.deserialize(<<
+      bitcoin_wire.transaction_version_1_bytes:bits,
+      marker:bits,
+    >>)
 
-  assert check_transaction_decode_error(
+  assert decode_assertions.check_transaction_decode_error(
       decode_err,
       5,
       "transaction.outputs.count",
@@ -114,12 +129,12 @@ pub fn deserialize_returns_invalid_segwit_marker_flag_error_test() {
 
   let assert Error(decode_err) =
     transaction.deserialize(<<
-      transaction_version_1_bytes:bits,
+      bitcoin_wire.transaction_version_1_bytes:bits,
       marker:bits,
       flag:bits,
     >>)
 
-  assert check_transaction_decode_error(
+  assert decode_assertions.check_transaction_decode_error(
       decode_err,
       4,
       "transaction.segwit.marker_and_flag",
@@ -130,7 +145,7 @@ pub fn deserialize_returns_invalid_segwit_marker_flag_error_test() {
 pub fn deserialize_treats_zero_input_and_output_counts_as_empty_legacy_tx_test() {
   let lock_time = 42
   let tx_bytes = <<
-    transaction_version_1_bytes:bits,
+    bitcoin_wire.transaction_version_1_bytes:bits,
     0x00,
     0x00,
     lock_time:little-size(32),
@@ -148,14 +163,18 @@ pub fn deserialize_treats_zero_input_and_output_counts_as_empty_legacy_tx_test()
 
 pub fn deserialize_reports_lock_time_decode_error_path_test() {
   let tx_without_lock_time = <<
-    transaction_version_1_bytes:bits,
-    build_minimal_input_section_bytes():bits,
-    build_minimal_output_section_bytes():bits,
+    bitcoin_wire.transaction_version_1_bytes:bits,
+    bitcoin_wire.build_minimal_input_section_bytes():bits,
+    bitcoin_wire.build_minimal_output_section_bytes():bits,
   >>
 
   let assert Error(decode_err) = transaction.deserialize(tx_without_lock_time)
 
-  assert check_transaction_decode_error(decode_err, 56, "transaction.lock_time")
+  assert decode_assertions.check_transaction_decode_error(
+      decode_err,
+      56,
+      "transaction.lock_time",
+    )
     == UnexpectedEof(4, 0)
 }
 
@@ -163,9 +182,9 @@ pub fn deserialize_rejects_legacy_tx_with_trailing_byte_test() {
   let lock_time = <<0:little-size(32)>>
 
   let valid_tx = <<
-    transaction_version_1_bytes:bits,
-    build_minimal_input_section_bytes():bits,
-    build_minimal_output_section_bytes():bits,
+    bitcoin_wire.transaction_version_1_bytes:bits,
+    bitcoin_wire.build_minimal_input_section_bytes():bits,
+    bitcoin_wire.build_minimal_output_section_bytes():bits,
     lock_time:bits,
   >>
 
@@ -173,7 +192,7 @@ pub fn deserialize_rejects_legacy_tx_with_trailing_byte_test() {
     transaction.deserialize(<<valid_tx:bits, 0x42:size(8)>>)
 
   let expected_offset = bit_array.byte_size(valid_tx)
-  assert check_transaction_decode_error(
+  assert decode_assertions.check_transaction_decode_error(
       decode_err,
       expected_offset,
       "transaction",
@@ -182,21 +201,23 @@ pub fn deserialize_rejects_legacy_tx_with_trailing_byte_test() {
 }
 
 pub fn deserialize_rejects_segwit_tx_with_trailing_byte_test() {
-  let input = build_input_bytes(<<0:size(256)>>, 0, <<>>, 0)
-  let output = build_output_bytes(<<0:little-size(64)>>, <<>>)
+  let input = bitcoin_wire.build_input_bytes(<<0:size(256)>>, 0, <<>>, 0)
+  let output = bitcoin_wire.build_output_bytes(<<0:little-size(64)>>, <<>>)
   let witness_stack = <<
-    compact_size(1):bits,
-    compact_size(0):bits,
+    bitcoin_wire.compact_size(1):bits,
+    bitcoin_wire.compact_size(0):bits,
   >>
 
   let valid_tx =
-    assemble_segwit_transaction_bytes([input], [output], [witness_stack])
+    bitcoin_wire.assemble_segwit_transaction_bytes([input], [output], [
+      witness_stack,
+    ])
 
   let assert Error(decode_err) =
     transaction.deserialize(<<valid_tx:bits, 0xFF:size(8)>>)
 
   let expected_offset = bit_array.byte_size(valid_tx)
-  assert check_transaction_decode_error(
+  assert decode_assertions.check_transaction_decode_error(
       decode_err,
       expected_offset,
       "transaction",
@@ -213,37 +234,37 @@ pub fn deserialize_rejects_input_count_when_minimum_input_bytes_are_unavailable_
 
   let input_count = 1
   let input_padding = <<
-    0:little-size({ 1 * { min_input_size_bytes - 1 } * 8 }),
+    0:little-size({ 1 * { bitcoin_wire.min_input_size_bytes - 1 } * 8 }),
   >>
 
   let assert Error(decode_err) =
     transaction.deserialize(<<
-      transaction_version_1_bytes:bits,
-      compact_size(input_count):bits,
+      bitcoin_wire.transaction_version_1_bytes:bits,
+      bitcoin_wire.compact_size(input_count):bits,
       input_padding:bits,
     >>)
 
-  assert check_transaction_decode_error(
+  assert decode_assertions.check_transaction_decode_error(
       decode_err,
       4,
       "transaction.inputs.count",
     )
     == InsufficientBytes(
-      remaining: min_input_size_bytes - 1,
-      claimed: min_input_size_bytes,
+      remaining: bitcoin_wire.min_input_size_bytes - 1,
+      claimed: bitcoin_wire.min_input_size_bytes,
     )
 }
 
 pub fn deserialize_preserves_single_input_test() {
-  let input_count = compact_size(1)
+  let input_count = bitcoin_wire.compact_size(1)
 
-  let outpoint_txid_bytes = repeat_byte(1, 32)
+  let outpoint_txid_bytes = bitcoin_wire.repeat_byte(1, 32)
   let outpoint_vout = 5
   let script_sig_bytes = <<0x48, 0x30, 0x45, 0x02, 0x21>>
   let sequence = 0xFFFFFFFE
 
   let input_bytes =
-    build_input_bytes(
+    bitcoin_wire.build_input_bytes(
       outpoint_txid_bytes,
       outpoint_vout,
       script_sig_bytes,
@@ -254,10 +275,10 @@ pub fn deserialize_preserves_single_input_test() {
 
   let assert Ok(tx) =
     transaction.deserialize(<<
-      transaction_version_1_bytes:bits,
+      bitcoin_wire.transaction_version_1_bytes:bits,
       input_count:bits,
       input_bytes:bits,
-      build_minimal_output_section_bytes():bits,
+      bitcoin_wire.build_minimal_output_section_bytes():bits,
       lock_time:bits,
     >>)
 
@@ -289,7 +310,7 @@ pub fn deserialize_preserves_single_input_test() {
 }
 
 pub fn deserialize_preserves_empty_scriptsig_test() {
-  let input_count = compact_size(1)
+  let input_count = bitcoin_wire.compact_size(1)
 
   let outpoint_txid_bytes = <<0:size(256)>>
   let outpoint_vout = 0xFFFFFFFF
@@ -297,7 +318,7 @@ pub fn deserialize_preserves_empty_scriptsig_test() {
   let sequence = 0xFFFFFFFE
 
   let input_bytes =
-    build_input_bytes(
+    bitcoin_wire.build_input_bytes(
       outpoint_txid_bytes,
       outpoint_vout,
       script_sig_bytes,
@@ -308,10 +329,10 @@ pub fn deserialize_preserves_empty_scriptsig_test() {
 
   let assert Ok(tx) =
     transaction.deserialize(<<
-      transaction_version_1_bytes:bits,
+      bitcoin_wire.transaction_version_1_bytes:bits,
       input_count:bits,
       input_bytes:bits,
-      build_minimal_output_section_bytes():bits,
+      bitcoin_wire.build_minimal_output_section_bytes():bits,
       lock_time:bits,
     >>)
 
@@ -327,11 +348,11 @@ pub fn deserialize_preserves_empty_scriptsig_test() {
 }
 
 pub fn deserialize_preserves_multiple_inputs_test() {
-  let input_count = compact_size(3)
+  let input_count = bitcoin_wire.compact_size(3)
 
-  let outpoint1_txid_bytes = repeat_byte(1, 32)
-  let outpoint2_txid_bytes = repeat_byte(2, 32)
-  let outpoint3_txid_bytes = repeat_byte(3, 32)
+  let outpoint1_txid_bytes = bitcoin_wire.repeat_byte(1, 32)
+  let outpoint2_txid_bytes = bitcoin_wire.repeat_byte(2, 32)
+  let outpoint3_txid_bytes = bitcoin_wire.repeat_byte(3, 32)
 
   let outpoint1_vout = 0
   let outpoint2_vout = 1
@@ -346,22 +367,37 @@ pub fn deserialize_preserves_multiple_inputs_test() {
   let seq3 = 1
 
   let input1_bytes =
-    build_input_bytes(outpoint1_txid_bytes, outpoint1_vout, sig1_bytes, seq1)
+    bitcoin_wire.build_input_bytes(
+      outpoint1_txid_bytes,
+      outpoint1_vout,
+      sig1_bytes,
+      seq1,
+    )
   let input2_bytes =
-    build_input_bytes(outpoint2_txid_bytes, outpoint2_vout, sig2_bytes, seq2)
+    bitcoin_wire.build_input_bytes(
+      outpoint2_txid_bytes,
+      outpoint2_vout,
+      sig2_bytes,
+      seq2,
+    )
   let input3_bytes =
-    build_input_bytes(outpoint3_txid_bytes, outpoint3_vout, sig3_bytes, seq3)
+    bitcoin_wire.build_input_bytes(
+      outpoint3_txid_bytes,
+      outpoint3_vout,
+      sig3_bytes,
+      seq3,
+    )
 
   let lock_time = <<0:little-size(32)>>
 
   let assert Ok(tx) =
     transaction.deserialize(<<
-      transaction_version_1_bytes:bits,
+      bitcoin_wire.transaction_version_1_bytes:bits,
       input_count:bits,
       input1_bytes:bits,
       input2_bytes:bits,
       input3_bytes:bits,
-      build_minimal_output_section_bytes():bits,
+      bitcoin_wire.build_minimal_output_section_bytes():bits,
       lock_time:bits,
     >>)
 
@@ -416,12 +452,12 @@ pub fn deserialize_rejects_scriptsig_length_exceeds_remaining_bytes_test() {
   // Build a transaction where the scriptSig length claims 100 bytes
   // but only 10 remain.
 
-  let input_count = compact_size(1)
+  let input_count = bitcoin_wire.compact_size(1)
 
   let outpoint_txid_bytes = <<0:size(256)>>
   let outpoint_vout_bytes = <<0:little-size(32)>>
 
-  let script_sig_length = compact_size(100)
+  let script_sig_length = bitcoin_wire.compact_size(100)
 
   let partial_script_sig = <<1, 2, 3, 4, 5, 6, 7, 8, 9, 10>>
 
@@ -434,12 +470,12 @@ pub fn deserialize_rejects_scriptsig_length_exceeds_remaining_bytes_test() {
 
   let assert Error(decode_err) =
     transaction.deserialize(<<
-      transaction_version_1_bytes:bits,
+      bitcoin_wire.transaction_version_1_bytes:bits,
       input_count:bits,
       input_bytes:bits,
     >>)
 
-  assert check_transaction_decode_error(
+  assert decode_assertions.check_transaction_decode_error(
       decode_err,
       41,
       "transaction.inputs[0].script_sig.length",
@@ -449,13 +485,13 @@ pub fn deserialize_rejects_scriptsig_length_exceeds_remaining_bytes_test() {
 
 pub fn deserialize_returns_error_with_current_input_index_test() {
   // Parse one complete input first so the failure path must retain index 1.
-  let input_count = compact_size(2)
+  let input_count = bitcoin_wire.compact_size(2)
 
-  let input1_bytes = build_input_bytes(<<0:size(256)>>, 0, <<>>, 0)
+  let input1_bytes = bitcoin_wire.build_input_bytes(<<0:size(256)>>, 0, <<>>, 0)
 
   let input2_outpoint_txid_bytes = <<0:size(256)>>
   let input2_outpoint_vout_bytes = <<0:little-size(32)>>
-  let input2_script_sig_length = compact_size(100)
+  let input2_script_sig_length = bitcoin_wire.compact_size(100)
   let input2_partial = <<
     input2_outpoint_txid_bytes:bits,
     input2_outpoint_vout_bytes:bits,
@@ -465,14 +501,14 @@ pub fn deserialize_returns_error_with_current_input_index_test() {
 
   let assert Error(decode_err) =
     transaction.deserialize(<<
-      transaction_version_1_bytes:bits,
+      bitcoin_wire.transaction_version_1_bytes:bits,
       input_count:bits,
       input1_bytes:bits,
       input2_partial:bits,
       remaining_bytes:bits,
     >>)
 
-  assert check_transaction_decode_error(
+  assert decode_assertions.check_transaction_decode_error(
       decode_err,
       82,
       "transaction.inputs[1].script_sig.length",
@@ -481,18 +517,24 @@ pub fn deserialize_returns_error_with_current_input_index_test() {
 }
 
 pub fn deserialize_reports_indexed_input_outpoint_txid_decode_error_path_test() {
-  let first_input = build_input_bytes(<<0:size(256)>>, 0, repeat_byte(0, 41), 0)
-  let partial_second_input = repeat_byte(0, 10)
+  let first_input =
+    bitcoin_wire.build_input_bytes(
+      <<0:size(256)>>,
+      0,
+      bitcoin_wire.repeat_byte(0, 41),
+      0,
+    )
+  let partial_second_input = bitcoin_wire.repeat_byte(0, 10)
 
   let assert Error(decode_err) =
     transaction.deserialize(<<
-      transaction_version_1_bytes:bits,
-      compact_size(2):bits,
+      bitcoin_wire.transaction_version_1_bytes:bits,
+      bitcoin_wire.compact_size(2):bits,
       first_input:bits,
       partial_second_input:bits,
     >>)
 
-  assert check_transaction_decode_error(
+  assert decode_assertions.check_transaction_decode_error(
       decode_err,
       87,
       "transaction.inputs[1].outpoint.txid",
@@ -501,18 +543,24 @@ pub fn deserialize_reports_indexed_input_outpoint_txid_decode_error_path_test() 
 }
 
 pub fn deserialize_reports_indexed_input_outpoint_vout_decode_error_path_test() {
-  let first_input = build_input_bytes(<<0:size(256)>>, 0, repeat_byte(0, 7), 0)
+  let first_input =
+    bitcoin_wire.build_input_bytes(
+      <<0:size(256)>>,
+      0,
+      bitcoin_wire.repeat_byte(0, 7),
+      0,
+    )
   let partial_second_input = <<0:size(256), 0:size(16)>>
 
   let assert Error(decode_err) =
     transaction.deserialize(<<
-      transaction_version_1_bytes:bits,
-      compact_size(2):bits,
+      bitcoin_wire.transaction_version_1_bytes:bits,
+      bitcoin_wire.compact_size(2):bits,
       first_input:bits,
       partial_second_input:bits,
     >>)
 
-  assert check_transaction_decode_error(
+  assert decode_assertions.check_transaction_decode_error(
       decode_err,
       85,
       "transaction.inputs[1].outpoint.vout",
@@ -521,18 +569,24 @@ pub fn deserialize_reports_indexed_input_outpoint_vout_decode_error_path_test() 
 }
 
 pub fn deserialize_reports_indexed_input_sequence_decode_error_path_test() {
-  let first_input = build_input_bytes(<<0:size(256)>>, 0, repeat_byte(0, 4), 0)
+  let first_input =
+    bitcoin_wire.build_input_bytes(
+      <<0:size(256)>>,
+      0,
+      bitcoin_wire.repeat_byte(0, 4),
+      0,
+    )
   let second_input_without_sequence = <<0:size(256), 0:size(32), 0>>
 
   let assert Error(decode_err) =
     transaction.deserialize(<<
-      transaction_version_1_bytes:bits,
-      compact_size(2):bits,
+      bitcoin_wire.transaction_version_1_bytes:bits,
+      bitcoin_wire.compact_size(2):bits,
       first_input:bits,
       second_input_without_sequence:bits,
     >>)
 
-  assert check_transaction_decode_error(
+  assert decode_assertions.check_transaction_decode_error(
       decode_err,
       87,
       "transaction.inputs[1].sequence",
@@ -549,36 +603,36 @@ pub fn deserialize_rejects_output_count_when_minimum_output_bytes_are_unavailabl
 
   let output_count = 1
   let output_padding = <<
-    0:little-size({ 1 * { min_output_size_bytes - 1 } * 8 }),
+    0:little-size({ 1 * { bitcoin_wire.min_output_size_bytes - 1 } * 8 }),
   >>
 
   let assert Error(decode_err) =
     transaction.deserialize(<<
-      transaction_version_1_bytes:bits,
-      build_minimal_input_section_bytes():bits,
-      compact_size(output_count):bits,
+      bitcoin_wire.transaction_version_1_bytes:bits,
+      bitcoin_wire.build_minimal_input_section_bytes():bits,
+      bitcoin_wire.compact_size(output_count):bits,
       output_padding:bits,
     >>)
 
-  assert check_transaction_decode_error(
+  assert decode_assertions.check_transaction_decode_error(
       decode_err,
       46,
       "transaction.outputs.count",
     )
     == InsufficientBytes(
-      remaining: min_output_size_bytes - 1,
-      claimed: min_output_size_bytes,
+      remaining: bitcoin_wire.min_output_size_bytes - 1,
+      claimed: bitcoin_wire.min_output_size_bytes,
     )
 }
 
 pub fn deserialize_accepts_legacy_tx_with_zero_outputs_test() {
   // Structural deserialization permits zero outputs; consensus validation does not.
-  let output_count = compact_size(0)
+  let output_count = bitcoin_wire.compact_size(0)
   let lock_time = <<0:little-size(32)>>
 
   let tx_bytes = <<
-    transaction_version_1_bytes:bits,
-    build_minimal_input_section_bytes():bits,
+    bitcoin_wire.transaction_version_1_bytes:bits,
+    bitcoin_wire.build_minimal_input_section_bytes():bits,
     output_count:bits,
     lock_time:bits,
   >>
@@ -591,19 +645,22 @@ pub fn deserialize_accepts_legacy_tx_with_zero_outputs_test() {
 
 pub fn deserialize_reports_indexed_output_value_decode_error_path_test() {
   let first_output =
-    build_output_bytes(<<0:little-size(64)>>, repeat_byte(0, 9))
+    bitcoin_wire.build_output_bytes(
+      <<0:little-size(64)>>,
+      bitcoin_wire.repeat_byte(0, 9),
+    )
   let partial_second_output_value = <<0:size(32)>>
 
   let assert Error(decode_err) =
     transaction.deserialize(<<
-      transaction_version_1_bytes:bits,
-      build_minimal_input_section_bytes():bits,
-      compact_size(2):bits,
+      bitcoin_wire.transaction_version_1_bytes:bits,
+      bitcoin_wire.build_minimal_input_section_bytes():bits,
+      bitcoin_wire.compact_size(2):bits,
       first_output:bits,
       partial_second_output_value:bits,
     >>)
 
-  assert check_transaction_decode_error(
+  assert decode_assertions.check_transaction_decode_error(
       decode_err,
       65,
       "transaction.outputs[1].value",
@@ -615,18 +672,18 @@ pub fn deserialize_accepts_segwit_tx_with_zero_outputs_test() {
   // Structural deserialization permits zero outputs; consensus validation does not.
   let marker = <<0x00>>
   let flag = <<0x01>>
-  let input_count = compact_size(1)
-  let input = build_input_bytes(<<0:size(256)>>, 0, <<>>, 0)
-  let output_count = compact_size(0)
+  let input_count = bitcoin_wire.compact_size(1)
+  let input = bitcoin_wire.build_input_bytes(<<0:size(256)>>, 0, <<>>, 0)
+  let output_count = bitcoin_wire.compact_size(0)
   // One zero-length item counts as witness data.
   let witness_stack = <<
-    compact_size(1):bits,
-    compact_size(0):bits,
+    bitcoin_wire.compact_size(1):bits,
+    bitcoin_wire.compact_size(0):bits,
   >>
   let lock_time = <<0:little-size(32)>>
 
   let tx_bytes = <<
-    transaction_version_1_bytes:bits,
+    bitcoin_wire.transaction_version_1_bytes:bits,
     marker:bits,
     flag:bits,
     input_count:bits,
@@ -647,14 +704,17 @@ pub fn deserialize_preserves_single_output_test() {
   let value_satoshis = 100_000_000
   let script_pubkey_bytes = <<0x76, 0xa9, 0x14>>
   let output =
-    build_output_bytes(<<value_satoshis:little-size(64)>>, script_pubkey_bytes)
+    bitcoin_wire.build_output_bytes(
+      <<value_satoshis:little-size(64)>>,
+      script_pubkey_bytes,
+    )
   let lock_time = <<0:little-size(32)>>
 
   let assert Ok(tx) =
     transaction.deserialize(<<
-      transaction_version_1_bytes:bits,
-      build_minimal_input_section_bytes():bits,
-      compact_size(1):bits,
+      bitcoin_wire.transaction_version_1_bytes:bits,
+      bitcoin_wire.build_minimal_input_section_bytes():bits,
+      bitcoin_wire.compact_size(1):bits,
       output:bits,
       lock_time:bits,
     >>)
@@ -678,11 +738,11 @@ pub fn deserialize_preserves_single_output_test() {
 }
 
 pub fn deserialize_preserves_one_satoshi_output_from_one_bit_offset_test() {
-  let output = build_output_bytes(<<1:little-size(64)>>, <<>>)
+  let output = bitcoin_wire.build_output_bytes(<<1:little-size(64)>>, <<>>)
   let tx_bytes = <<
-    transaction_version_1_bytes:bits,
-    build_minimal_input_section_bytes():bits,
-    compact_size(1):bits,
+    bitcoin_wire.transaction_version_1_bytes:bits,
+    bitcoin_wire.build_minimal_input_section_bytes():bits,
+    bitcoin_wire.compact_size(1):bits,
     output:bits,
     0:little-size(32),
   >>
@@ -699,7 +759,7 @@ pub fn deserialize_preserves_one_satoshi_output_from_one_bit_offset_test() {
 }
 
 pub fn deserialize_preserves_multiple_outputs_test() {
-  let output_count = compact_size(3)
+  let output_count = bitcoin_wire.compact_size(3)
 
   let value1 = <<0:little-size(64)>>
   let value2 = <<100_000_000:little-size(64)>>
@@ -709,16 +769,16 @@ pub fn deserialize_preserves_multiple_outputs_test() {
   let script2_bytes = <<0x01>>
   let script3_bytes = <<0xAA, 0xBB>>
 
-  let output1_bytes = build_output_bytes(value1, script1_bytes)
-  let output2_bytes = build_output_bytes(value2, script2_bytes)
-  let output3_bytes = build_output_bytes(value3, script3_bytes)
+  let output1_bytes = bitcoin_wire.build_output_bytes(value1, script1_bytes)
+  let output2_bytes = bitcoin_wire.build_output_bytes(value2, script2_bytes)
+  let output3_bytes = bitcoin_wire.build_output_bytes(value3, script3_bytes)
 
   let lock_time = <<0:little-size(32)>>
 
   let assert Ok(tx) =
     transaction.deserialize(<<
-      transaction_version_1_bytes:bits,
-      build_minimal_input_section_bytes():bits,
+      bitcoin_wire.transaction_version_1_bytes:bits,
+      bitcoin_wire.build_minimal_input_section_bytes():bits,
       output_count:bits,
       output1_bytes:bits,
       output2_bytes:bits,
@@ -774,14 +834,17 @@ pub fn deserialize_preserves_empty_scriptpubkey_test() {
   let value_satoshis = 50_000_000
   let script_pubkey_bytes = <<>>
   let output =
-    build_output_bytes(<<value_satoshis:little-size(64)>>, script_pubkey_bytes)
+    bitcoin_wire.build_output_bytes(
+      <<value_satoshis:little-size(64)>>,
+      script_pubkey_bytes,
+    )
   let lock_time = <<0:little-size(32)>>
 
   let assert Ok(tx) =
     transaction.deserialize(<<
-      transaction_version_1_bytes:bits,
-      build_minimal_input_section_bytes():bits,
-      compact_size(1):bits,
+      bitcoin_wire.transaction_version_1_bytes:bits,
+      bitcoin_wire.build_minimal_input_section_bytes():bits,
+      bitcoin_wire.compact_size(1):bits,
       output:bits,
       lock_time:bits,
     >>)
@@ -807,12 +870,12 @@ pub fn deserialize_handles_output_value_min_i64_for_target_test() {
   // Create an output with value = minimum i64 (-9223372036854775808)
   // This value exceeds JavaScript's MIN_SAFE_INTEGER, so conversion fails.
 
-  let output_count = compact_size(1)
+  let output_count = bitcoin_wire.compact_size(1)
 
   // Minimum i64: sign bit set, all other bits clear
   let value_min_i64 = <<0, 0, 0, 0, 0, 0, 0, 0x80>>
 
-  let script_pubkey_length = compact_size(0)
+  let script_pubkey_length = bitcoin_wire.compact_size(0)
 
   let output_bytes = <<
     value_min_i64:bits,
@@ -821,8 +884,8 @@ pub fn deserialize_handles_output_value_min_i64_for_target_test() {
   let lock_time = <<0:little-size(32)>>
 
   let tx_bytes = <<
-    transaction_version_1_bytes:bits,
-    build_minimal_input_section_bytes():bits,
+    bitcoin_wire.transaction_version_1_bytes:bits,
+    bitcoin_wire.build_minimal_input_section_bytes():bits,
     output_count:bits,
     output_bytes:bits,
     lock_time:bits,
@@ -832,7 +895,7 @@ pub fn deserialize_handles_output_value_min_i64_for_target_test() {
     True -> {
       let assert Error(decode_err) = transaction.deserialize(tx_bytes)
 
-      assert check_transaction_decode_error(
+      assert decode_assertions.check_transaction_decode_error(
           decode_err,
           47,
           "transaction.outputs[0].value",
@@ -859,10 +922,10 @@ pub fn deserialize_rejects_scriptpubkey_length_exceeding_remaining_bytes_test() 
   // Build an output where the scriptPubKey length claims 100 bytes
   // but only 10 remain.
 
-  let output_count = compact_size(1)
+  let output_count = bitcoin_wire.compact_size(1)
 
   let value = <<0:little-size(64)>>
-  let script_pubkey_length = compact_size(100)
+  let script_pubkey_length = bitcoin_wire.compact_size(100)
 
   let partial_script_pubkey = <<1, 2, 3, 4, 5, 6, 7, 8, 9, 10>>
 
@@ -874,13 +937,13 @@ pub fn deserialize_rejects_scriptpubkey_length_exceeding_remaining_bytes_test() 
 
   let assert Error(decode_err) =
     transaction.deserialize(<<
-      transaction_version_1_bytes:bits,
-      build_minimal_input_section_bytes():bits,
+      bitcoin_wire.transaction_version_1_bytes:bits,
+      bitcoin_wire.build_minimal_input_section_bytes():bits,
       output_count:bits,
       output_bytes:bits,
     >>)
 
-  assert check_transaction_decode_error(
+  assert decode_assertions.check_transaction_decode_error(
       decode_err,
       55,
       "transaction.outputs[0].script_pubkey.length",
@@ -895,14 +958,14 @@ pub fn deserialize_rejects_scriptpubkey_length_exceeding_remaining_bytes_test() 
 pub fn deserialize_rejects_segwit_tx_with_zero_inputs_test() {
   let marker = <<0x00>>
   let flag = <<0x01>>
-  let input_count = compact_size(0)
-  let output_count = compact_size(1)
-  let output = build_output_bytes(<<0:little-size(64)>>, <<>>)
+  let input_count = bitcoin_wire.compact_size(0)
+  let output_count = bitcoin_wire.compact_size(1)
+  let output = bitcoin_wire.build_output_bytes(<<0:little-size(64)>>, <<>>)
   let lock_time = <<0:little-size(32)>>
   let expected_witness_offset = 4 + 2 + 1 + 1 + bit_array.byte_size(output)
 
   let tx_bytes = <<
-    transaction_version_1_bytes:bits,
+    bitcoin_wire.transaction_version_1_bytes:bits,
     marker:bits,
     flag:bits,
     input_count:bits,
@@ -913,7 +976,7 @@ pub fn deserialize_rejects_segwit_tx_with_zero_inputs_test() {
 
   let assert Error(decode_err) = transaction.deserialize(tx_bytes)
 
-  assert check_transaction_decode_error(
+  assert decode_assertions.check_transaction_decode_error(
       decode_err,
       expected_witness_offset,
       "transaction",
@@ -922,15 +985,21 @@ pub fn deserialize_rejects_segwit_tx_with_zero_inputs_test() {
 }
 
 pub fn deserialize_rejects_segwit_tx_with_all_empty_witness_stacks_test() {
-  let input1 = build_input_bytes(<<0:size(256)>>, 0, <<>>, 0)
+  let input1 = bitcoin_wire.build_input_bytes(<<0:size(256)>>, 0, <<>>, 0)
   let input2 =
-    build_input_bytes(repeat_byte(1, 32), 1, <<0x01, 0x02>>, 0xFFFFFFFF)
+    bitcoin_wire.build_input_bytes(
+      bitcoin_wire.repeat_byte(1, 32),
+      1,
+      <<0x01, 0x02>>,
+      0xFFFFFFFF,
+    )
 
-  let output = build_output_bytes(<<1000:little-size(64)>>, <<0x76, 0xa9>>)
+  let output =
+    bitcoin_wire.build_output_bytes(<<1000:little-size(64)>>, <<0x76, 0xa9>>)
 
   // All-empty witness stacks make extended serialization superfluous.
-  let witness_stack1 = compact_size(0)
-  let witness_stack2 = compact_size(0)
+  let witness_stack1 = bitcoin_wire.compact_size(0)
+  let witness_stack2 = bitcoin_wire.compact_size(0)
   let expected_witness_offset =
     4
     + 2
@@ -941,14 +1010,14 @@ pub fn deserialize_rejects_segwit_tx_with_all_empty_witness_stacks_test() {
     + bit_array.byte_size(output)
 
   let tx_bytes =
-    assemble_segwit_transaction_bytes([input1, input2], [output], [
+    bitcoin_wire.assemble_segwit_transaction_bytes([input1, input2], [output], [
       witness_stack1,
       witness_stack2,
     ])
 
   let assert Error(decode_err) = transaction.deserialize(tx_bytes)
 
-  assert check_transaction_decode_error(
+  assert decode_assertions.check_transaction_decode_error(
       decode_err,
       expected_witness_offset,
       "transaction",
@@ -957,19 +1026,25 @@ pub fn deserialize_rejects_segwit_tx_with_all_empty_witness_stacks_test() {
 }
 
 pub fn deserialize_segwit_tx_allows_empty_stack_when_another_stack_has_item_test() {
-  let input1 = build_input_bytes(<<0:size(256)>>, 0, <<>>, 0)
+  let input1 = bitcoin_wire.build_input_bytes(<<0:size(256)>>, 0, <<>>, 0)
   let input2 =
-    build_input_bytes(repeat_byte(1, 32), 1, <<0x01, 0x02>>, 0xFFFFFFFF)
-  let output = build_output_bytes(<<1000:little-size(64)>>, <<0x76, 0xa9>>)
+    bitcoin_wire.build_input_bytes(
+      bitcoin_wire.repeat_byte(1, 32),
+      1,
+      <<0x01, 0x02>>,
+      0xFFFFFFFF,
+    )
+  let output =
+    bitcoin_wire.build_output_bytes(<<1000:little-size(64)>>, <<0x76, 0xa9>>)
 
-  let empty_stack = compact_size(0)
+  let empty_stack = bitcoin_wire.compact_size(0)
   let stack_with_empty_item = <<
-    compact_size(1):bits,
-    compact_size(0):bits,
+    bitcoin_wire.compact_size(1):bits,
+    bitcoin_wire.compact_size(0):bits,
   >>
 
   let tx_bytes =
-    assemble_segwit_transaction_bytes([input1, input2], [output], [
+    bitcoin_wire.assemble_segwit_transaction_bytes([input1, input2], [output], [
       empty_stack,
       stack_with_empty_item,
     ])
@@ -992,35 +1067,37 @@ pub fn deserialize_segwit_tx_allows_empty_stack_when_another_stack_has_item_test
 }
 
 pub fn deserialize_witness_stack_with_multiple_items_test() {
-  let input = build_input_bytes(<<0:size(256)>>, 0, <<>>, 0)
-  let output = build_output_bytes(<<1000:little-size(64)>>, <<>>)
+  let input = bitcoin_wire.build_input_bytes(<<0:size(256)>>, 0, <<>>, 0)
+  let output = bitcoin_wire.build_output_bytes(<<1000:little-size(64)>>, <<>>)
 
   let witness_item1_data = <<0x48, 0x30, 0x45>>
   let witness_item2_data = <<0x21, 0x02, 0x03>>
   let witness_item3_data = <<0xAA, 0xBB, 0xCC, 0xDD>>
 
   let witness_item1 = <<
-    compact_size(bit_array.byte_size(witness_item1_data)):bits,
+    bitcoin_wire.compact_size(bit_array.byte_size(witness_item1_data)):bits,
     witness_item1_data:bits,
   >>
   let witness_item2 = <<
-    compact_size(bit_array.byte_size(witness_item2_data)):bits,
+    bitcoin_wire.compact_size(bit_array.byte_size(witness_item2_data)):bits,
     witness_item2_data:bits,
   >>
   let witness_item3 = <<
-    compact_size(bit_array.byte_size(witness_item3_data)):bits,
+    bitcoin_wire.compact_size(bit_array.byte_size(witness_item3_data)):bits,
     witness_item3_data:bits,
   >>
 
   let witness_stack = <<
-    compact_size(3):bits,
+    bitcoin_wire.compact_size(3):bits,
     witness_item1:bits,
     witness_item2:bits,
     witness_item3:bits,
   >>
 
   let tx_bytes =
-    assemble_segwit_transaction_bytes([input], [output], [witness_stack])
+    bitcoin_wire.assemble_segwit_transaction_bytes([input], [output], [
+      witness_stack,
+    ])
 
   let assert Ok(tx) = transaction.deserialize(tx_bytes)
 
@@ -1044,17 +1121,19 @@ pub fn deserialize_witness_stack_with_multiple_items_test() {
 }
 
 pub fn deserialize_witness_item_with_zero_length_test() {
-  let input = build_input_bytes(<<0:size(256)>>, 0, <<>>, 0)
-  let output = build_output_bytes(<<1000:little-size(64)>>, <<>>)
+  let input = bitcoin_wire.build_input_bytes(<<0:size(256)>>, 0, <<>>, 0)
+  let output = bitcoin_wire.build_output_bytes(<<1000:little-size(64)>>, <<>>)
 
   // A zero-length item still makes the witness record non-empty.
   let witness_stack = <<
-    compact_size(1):bits,
-    compact_size(0):bits,
+    bitcoin_wire.compact_size(1):bits,
+    bitcoin_wire.compact_size(0):bits,
   >>
 
   let tx_bytes =
-    assemble_segwit_transaction_bytes([input], [output], [witness_stack])
+    bitcoin_wire.assemble_segwit_transaction_bytes([input], [output], [
+      witness_stack,
+    ])
 
   let assert Ok(tx) = transaction.deserialize(tx_bytes)
 
@@ -1071,25 +1150,27 @@ pub fn deserialize_witness_item_with_zero_length_test() {
 }
 
 pub fn deserialize_witness_item_length_exceeds_remaining_bytes_test() {
-  let input = build_input_bytes(<<0:size(256)>>, 0, <<>>, 0)
-  let output = build_output_bytes(<<1000:little-size(64)>>, <<>>)
+  let input = bitcoin_wire.build_input_bytes(<<0:size(256)>>, 0, <<>>, 0)
+  let output = bitcoin_wire.build_output_bytes(<<1000:little-size(64)>>, <<>>)
 
   // Build witness stack where item length exceeds remaining bytes
   // Claim 100 bytes for the item but only provide 10 bytes of data
   let witness_item_data = <<1, 2, 3, 4, 5, 6, 7, 8, 9, 10>>
   let witness_stack = <<
-    compact_size(1):bits,
-    compact_size(100):bits,
+    bitcoin_wire.compact_size(1):bits,
+    bitcoin_wire.compact_size(100):bits,
     witness_item_data:bits,
   >>
 
   let tx_bytes =
-    assemble_segwit_transaction_bytes([input], [output], [witness_stack])
+    bitcoin_wire.assemble_segwit_transaction_bytes([input], [output], [
+      witness_stack,
+    ])
 
   let assert Error(decode_err) = transaction.deserialize(tx_bytes)
 
   // The remaining bytes are the 10-byte payload and 4-byte lock time.
-  assert check_transaction_decode_error(
+  assert decode_assertions.check_transaction_decode_error(
       decode_err,
       59,
       "transaction.witnesses[0].items[0].length",
@@ -1098,17 +1179,17 @@ pub fn deserialize_witness_item_length_exceeds_remaining_bytes_test() {
 }
 
 pub fn deserialize_rejects_non_minimal_witness_item_count_test() {
-  let input = build_input_bytes(<<0:size(256)>>, 0, <<>>, 0)
-  let output = build_output_bytes(<<1000:little-size(64)>>, <<>>)
+  let input = bitcoin_wire.build_input_bytes(<<0:size(256)>>, 0, <<>>, 0)
+  let output = bitcoin_wire.build_output_bytes(<<1000:little-size(64)>>, <<>>)
   let non_minimal_item_count = <<0xFD, 0x01, 0x00>>
   let tx_bytes =
-    assemble_segwit_transaction_bytes([input], [output], [
+    bitcoin_wire.assemble_segwit_transaction_bytes([input], [output], [
       non_minimal_item_count,
     ])
 
   let assert Error(decode_err) = transaction.deserialize(tx_bytes)
 
-  assert check_transaction_decode_error(
+  assert decode_assertions.check_transaction_decode_error(
       decode_err,
       58,
       "transaction.witnesses[0].items.count",
@@ -1117,26 +1198,26 @@ pub fn deserialize_rejects_non_minimal_witness_item_count_test() {
 }
 
 pub fn deserialize_reports_truncated_witness_item_count_test() {
-  let input = build_input_bytes(<<0:size(256)>>, 0, <<>>, 0)
-  let output = build_output_bytes(<<1000:little-size(64)>>, <<>>)
+  let input = bitcoin_wire.build_input_bytes(<<0:size(256)>>, 0, <<>>, 0)
+  let output = bitcoin_wire.build_output_bytes(<<1000:little-size(64)>>, <<>>)
 
   // End the byte stream inside the CompactSize value so later fields cannot
   // complete the encoding.
   let truncated_item_count = <<0xFD, 0x01>>
   let tx_bytes = <<
-    transaction_version_1_bytes:bits,
+    bitcoin_wire.transaction_version_1_bytes:bits,
     0x00,
     0x01,
-    compact_size(1):bits,
+    bitcoin_wire.compact_size(1):bits,
     input:bits,
-    compact_size(1):bits,
+    bitcoin_wire.compact_size(1):bits,
     output:bits,
     truncated_item_count:bits,
   >>
 
   let assert Error(decode_err) = transaction.deserialize(tx_bytes)
 
-  assert check_transaction_decode_error(
+  assert decode_assertions.check_transaction_decode_error(
       decode_err,
       58,
       "transaction.witnesses[0].items.count",
@@ -1145,20 +1226,22 @@ pub fn deserialize_reports_truncated_witness_item_count_test() {
 }
 
 pub fn deserialize_rejects_non_minimal_witness_item_length_test() {
-  let input = build_input_bytes(<<0:size(256)>>, 0, <<>>, 0)
-  let output = build_output_bytes(<<1000:little-size(64)>>, <<>>)
+  let input = bitcoin_wire.build_input_bytes(<<0:size(256)>>, 0, <<>>, 0)
+  let output = bitcoin_wire.build_output_bytes(<<1000:little-size(64)>>, <<>>)
   let witness_stack = <<
-    compact_size(1):bits,
+    bitcoin_wire.compact_size(1):bits,
     0xFD,
     0x01,
     0x00,
   >>
   let tx_bytes =
-    assemble_segwit_transaction_bytes([input], [output], [witness_stack])
+    bitcoin_wire.assemble_segwit_transaction_bytes([input], [output], [
+      witness_stack,
+    ])
 
   let assert Error(decode_err) = transaction.deserialize(tx_bytes)
 
-  assert check_transaction_decode_error(
+  assert decode_assertions.check_transaction_decode_error(
       decode_err,
       59,
       "transaction.witnesses[0].items[0].length",

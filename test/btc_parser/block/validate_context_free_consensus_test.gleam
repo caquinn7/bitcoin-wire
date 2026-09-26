@@ -14,11 +14,7 @@ import gleam/bit_array
 import gleam/crypto.{Sha256}
 import gleam/int
 import gleam/list
-import support/bitcoin_wire.{compact_size}
-import support/transaction_wire.{
-  assemble_segwit_transaction_bytes, build_input_bytes, build_output_bytes,
-  repeat_byte,
-}
+import support/bitcoin_wire
 
 const regtest_pow_limit_bytes = <<
   0xFF,
@@ -112,7 +108,7 @@ fn mainnet_pow_limit() -> PowLimit {
 
 pub fn validate_context_free_consensus_rejects_negative_pow_target_test() {
   let block_bytes =
-    assemble_block_bytes_with_compact_target(
+    build_unmined_block_bytes_with_compact_target(
       [build_valid_coinbase_legacy_transaction_bytes(1)],
       0x20800001,
     )
@@ -126,7 +122,7 @@ pub fn validate_context_free_consensus_rejects_negative_pow_target_test() {
 }
 
 pub fn validate_context_free_consensus_rejects_zero_pow_target_before_block_size_checks_test() {
-  let block_bytes = assemble_block_bytes_with_compact_target([], 0)
+  let block_bytes = build_unmined_block_bytes_with_compact_target([], 0)
   let assert Ok(parsed_block) = block.deserialize(block_bytes)
 
   assert block.validate_context_free_consensus(
@@ -138,7 +134,7 @@ pub fn validate_context_free_consensus_rejects_zero_pow_target_before_block_size
 
 pub fn validate_context_free_consensus_rejects_overflowing_pow_target_test() {
   let block_bytes =
-    assemble_block_bytes_with_compact_target(
+    build_unmined_block_bytes_with_compact_target(
       [build_valid_coinbase_legacy_transaction_bytes(1)],
       0x23010000,
     )
@@ -153,7 +149,7 @@ pub fn validate_context_free_consensus_rejects_overflowing_pow_target_test() {
 
 pub fn validate_context_free_consensus_rejects_pow_target_above_supplied_limit_test() {
   let block_bytes =
-    assemble_block_bytes_with_compact_target(
+    build_unmined_block_bytes_with_compact_target(
       [build_valid_coinbase_legacy_transaction_bytes(1)],
       regtest_compact_target,
     )
@@ -168,7 +164,9 @@ pub fn validate_context_free_consensus_rejects_pow_target_above_supplied_limit_t
 
 pub fn validate_context_free_consensus_accepts_pow_target_equal_to_supplied_limit_test() {
   let block_bytes =
-    assemble_block_bytes([build_valid_coinbase_legacy_transaction_bytes(1)])
+    build_mined_regtest_block_bytes([
+      build_valid_coinbase_legacy_transaction_bytes(1),
+    ])
   let assert Ok(parsed_block) = block.deserialize(block_bytes)
   let assert Ok(pow_limit) = block.new_pow_limit(regtest_compact_target_bytes)
 
@@ -183,7 +181,7 @@ pub fn validate_context_free_consensus_accepts_pow_target_equal_to_supplied_limi
 
 pub fn validate_context_free_consensus_rejects_header_hash_above_pow_target_test() {
   let block_bytes =
-    assemble_block_bytes_with_compact_target(
+    build_unmined_block_bytes_with_compact_target(
       [build_valid_coinbase_legacy_transaction_bytes(1)],
       0x03000001,
     )
@@ -205,7 +203,7 @@ pub fn validate_context_free_consensus_rejects_header_hash_above_pow_target_test
 // ============================================================================
 
 pub fn validate_context_free_consensus_rejects_empty_block_test() {
-  let block_bytes = assemble_block_bytes([])
+  let block_bytes = build_mined_regtest_block_bytes([])
   let assert Ok(parsed_block) =
     deserialize_with_limits(block_bytes, bit_array.byte_size(block_bytes), 0)
 
@@ -223,7 +221,7 @@ pub fn validate_context_free_consensus_rejects_impossibly_large_transaction_coun
   let tx_bytes = build_invalid_legacy_transaction_bytes(0)
   let tx_payload = bit_array.concat(list.repeat(tx_bytes, tx_count))
   let block_bytes =
-    assemble_block_from_transaction_payload_bytes(
+    build_mined_regtest_block_from_transaction_payload_bytes(
       tx_count,
       <<0:256>>,
       tx_payload,
@@ -290,16 +288,19 @@ pub fn validate_context_free_consensus_prioritizes_base_size_over_weight_limit_t
 pub fn validate_context_free_consensus_rejects_block_over_weight_limit_and_below_base_size_limit_test() {
   let witness_item_size = 3_999_429
   let witness_item = <<0:size({ witness_item_size * 8 })>>
-  let input = build_input_bytes(<<1, 0:size(248)>>, 0, <<>>, 0)
-  let output = build_output_bytes(<<0:little-size(64)>>, <<>>)
+  let input = bitcoin_wire.build_input_bytes(<<1, 0:size(248)>>, 0, <<>>, 0)
+  let output = bitcoin_wire.build_output_bytes(<<0:little-size(64)>>, <<>>)
   let witness_stack = <<
-    compact_size(1):bits,
-    compact_size(witness_item_size):bits,
+    bitcoin_wire.compact_size(1):bits,
+    bitcoin_wire.compact_size(witness_item_size):bits,
     witness_item:bits,
   >>
-  let tx = assemble_segwit_transaction_bytes([input], [output], [witness_stack])
+  let tx =
+    bitcoin_wire.assemble_segwit_transaction_bytes([input], [output], [
+      witness_stack,
+    ])
   let block_bytes =
-    assemble_block_from_transaction_payload_bytes(1, <<0:256>>, tx)
+    build_mined_regtest_block_from_transaction_payload_bytes(1, <<0:256>>, tx)
 
   let assert Ok(parsed_block) =
     deserialize_with_limits(block_bytes, bit_array.byte_size(block_bytes), 1)
@@ -328,7 +329,7 @@ pub fn validate_context_free_consensus_rejects_mismatched_merkle_root_test() {
   let header_merkle_root = <<0:256>>
   let computed_merkle_root = compute_transaction_merkle_root(txs)
   let block_bytes =
-    assemble_block_bytes_with_merkle_root(txs, header_merkle_root)
+    build_mined_regtest_block_bytes_with_merkle_root(txs, header_merkle_root)
 
   assert header_merkle_root != computed_merkle_root
   let assert Ok(parsed_block) =
@@ -348,7 +349,7 @@ pub fn validate_context_free_consensus_rejects_mismatched_merkle_root_test() {
 
 pub fn validate_context_free_consensus_rejects_mutated_merkle_tree_test() {
   let txs = build_mutated_transactions()
-  let block_bytes = assemble_block_bytes(txs)
+  let block_bytes = build_mined_regtest_block_bytes(txs)
 
   let assert Ok(parsed_block) =
     deserialize_with_limits(block_bytes, bit_array.byte_size(block_bytes), 4)
@@ -367,7 +368,7 @@ pub fn validate_context_free_consensus_prioritizes_merkle_root_mismatch_over_mut
   let header_merkle_root = <<0:256>>
   let computed_merkle_root = compute_transaction_merkle_root(txs)
   let block_bytes =
-    assemble_block_bytes_with_merkle_root(txs, header_merkle_root)
+    build_mined_regtest_block_bytes_with_merkle_root(txs, header_merkle_root)
 
   assert header_merkle_root != computed_merkle_root
   let assert Ok(parsed_block) =
@@ -395,7 +396,7 @@ pub fn validate_context_free_consensus_accepts_coinbase_at_first_and_only_positi
     build_valid_legacy_transaction_bytes(2, <<>>),
     build_valid_legacy_transaction_bytes(3, <<>>),
   ]
-  let block_bytes = assemble_block_bytes(txs)
+  let block_bytes = build_mined_regtest_block_bytes(txs)
 
   let assert Ok(parsed_block) =
     deserialize_with_limits(block_bytes, bit_array.byte_size(block_bytes), 3)
@@ -409,7 +410,7 @@ pub fn validate_context_free_consensus_rejects_block_without_coinbase_test() {
     build_valid_legacy_transaction_bytes(1, <<>>),
     build_valid_legacy_transaction_bytes(2, <<>>),
   ]
-  let block_bytes = assemble_block_bytes(txs)
+  let block_bytes = build_mined_regtest_block_bytes(txs)
 
   let assert Ok(parsed_block) =
     deserialize_with_limits(block_bytes, bit_array.byte_size(block_bytes), 2)
@@ -428,7 +429,7 @@ pub fn validate_context_free_consensus_prioritizes_missing_first_coinbase_over_l
     build_valid_legacy_transaction_bytes(1, <<>>),
     build_valid_coinbase_legacy_transaction_bytes(2),
   ]
-  let block_bytes = assemble_block_bytes(txs)
+  let block_bytes = build_mined_regtest_block_bytes(txs)
 
   let assert Ok(parsed_block) =
     deserialize_with_limits(block_bytes, bit_array.byte_size(block_bytes), 2)
@@ -448,7 +449,7 @@ pub fn validate_context_free_consensus_rejects_additional_coinbase_at_its_wire_i
     build_valid_legacy_transaction_bytes(2, <<>>),
     build_valid_coinbase_legacy_transaction_bytes(3),
   ]
-  let block_bytes = assemble_block_bytes(txs)
+  let block_bytes = build_mined_regtest_block_bytes(txs)
 
   let assert Ok(parsed_block) =
     deserialize_with_limits(block_bytes, bit_array.byte_size(block_bytes), 3)
@@ -469,7 +470,7 @@ pub fn validate_context_free_consensus_reports_first_of_multiple_additional_coin
     build_valid_coinbase_legacy_transaction_bytes(3),
     build_valid_coinbase_legacy_transaction_bytes(4),
   ]
-  let block_bytes = assemble_block_bytes(txs)
+  let block_bytes = build_mined_regtest_block_bytes(txs)
 
   let assert Ok(parsed_block) =
     deserialize_with_limits(block_bytes, bit_array.byte_size(block_bytes), 4)
@@ -490,7 +491,7 @@ pub fn validate_context_free_consensus_does_not_treat_multi_input_null_outpoint_
     build_valid_coinbase_legacy_transaction_bytes(1),
     invalid_tx,
   ]
-  let block_bytes = assemble_block_bytes(txs)
+  let block_bytes = build_mined_regtest_block_bytes(txs)
 
   let assert Ok(parsed_block) =
     deserialize_with_limits(block_bytes, bit_array.byte_size(block_bytes), 2)
@@ -511,7 +512,7 @@ pub fn validate_context_free_consensus_counts_invalid_coinbase_scriptsig_as_firs
     invalid_coinbase,
     build_valid_legacy_transaction_bytes(2, <<>>),
   ]
-  let block_bytes = assemble_block_bytes(txs)
+  let block_bytes = build_mined_regtest_block_bytes(txs)
 
   let assert Ok(parsed_block) =
     deserialize_with_limits(block_bytes, bit_array.byte_size(block_bytes), 2)
@@ -531,7 +532,7 @@ pub fn validate_context_free_consensus_counts_invalid_coinbase_scriptsig_as_firs
 
 pub fn validate_context_free_consensus_accepts_twenty_thousand_legacy_sigops_test() {
   let txs = build_legacy_sigop_boundary_transactions(0)
-  let block_bytes = assemble_block_bytes(txs)
+  let block_bytes = build_mined_regtest_block_bytes(txs)
 
   let assert Ok(parsed_block) =
     deserialize_with_limits(block_bytes, bit_array.byte_size(block_bytes), 2)
@@ -544,7 +545,7 @@ pub fn validate_context_free_consensus_accepts_twenty_thousand_legacy_sigops_tes
 
 pub fn validate_context_free_consensus_rejects_twenty_thousand_and_one_legacy_sigops_test() {
   let txs = build_legacy_sigop_boundary_transactions(1)
-  let block_bytes = assemble_block_bytes(txs)
+  let block_bytes = build_mined_regtest_block_bytes(txs)
 
   let assert Ok(parsed_block) =
     deserialize_with_limits(block_bytes, bit_array.byte_size(block_bytes), 2)
@@ -559,20 +560,27 @@ pub fn validate_context_free_consensus_rejects_twenty_thousand_and_one_legacy_si
 }
 
 pub fn validate_context_free_consensus_ignores_sigops_in_witness_data_test() {
-  let witness_item = repeat_byte(0xAC, 20_001)
+  let witness_item = bitcoin_wire.repeat_byte(0xAC, 20_001)
   let witness_stack = <<
-    compact_size(1):bits,
-    compact_size(bit_array.byte_size(witness_item)):bits,
+    bitcoin_wire.compact_size(1):bits,
+    bitcoin_wire.compact_size(bit_array.byte_size(witness_item)):bits,
     witness_item:bits,
   >>
   let segwit_tx =
-    assemble_segwit_transaction_bytes(
-      [build_input_bytes(repeat_byte(1, 32), 0, <<>>, 0)],
-      [build_output_bytes(<<0:little-size(64)>>, <<>>)],
+    bitcoin_wire.assemble_segwit_transaction_bytes(
+      [
+        bitcoin_wire.build_input_bytes(
+          bitcoin_wire.repeat_byte(1, 32),
+          0,
+          <<>>,
+          0,
+        ),
+      ],
+      [bitcoin_wire.build_output_bytes(<<0:little-size(64)>>, <<>>)],
       [witness_stack],
     )
   let block_bytes =
-    assemble_block_bytes([
+    build_mined_regtest_block_bytes([
       build_valid_coinbase_legacy_transaction_bytes(1),
       segwit_tx,
     ])
@@ -585,7 +593,7 @@ pub fn validate_context_free_consensus_ignores_sigops_in_witness_data_test() {
 }
 
 pub fn validate_context_free_consensus_collects_all_violations_in_validation_order_test() {
-  let ten_thousand_sigops = repeat_byte(0xAC, 10_000)
+  let ten_thousand_sigops = bitcoin_wire.repeat_byte(0xAC, 10_000)
   let invalid_tx = build_invalid_legacy_transaction_bytes(3)
   let txs = [
     build_valid_legacy_transaction_bytes(1, ten_thousand_sigops),
@@ -595,7 +603,7 @@ pub fn validate_context_free_consensus_collects_all_violations_in_validation_ord
   let header_merkle_root = <<0:256>>
   let computed_merkle_root = compute_transaction_merkle_root(txs)
   let block_bytes =
-    assemble_block_bytes_with_merkle_root(txs, header_merkle_root)
+    build_mined_regtest_block_bytes_with_merkle_root(txs, header_merkle_root)
 
   assert header_merkle_root != computed_merkle_root
   let assert Ok(parsed_block) =
@@ -625,7 +633,7 @@ pub fn validate_context_free_consensus_collects_transaction_violations_in_wire_o
   let valid_middle = build_valid_legacy_transaction_bytes(2, <<>>)
   let invalid_last = build_invalid_legacy_transaction_bytes(3)
   let block_bytes =
-    assemble_block_bytes([
+    build_mined_regtest_block_bytes([
       build_valid_coinbase_legacy_transaction_bytes(0),
       invalid_first,
       valid_middle,
@@ -652,7 +660,7 @@ pub fn validate_context_free_consensus_collects_merkle_root_mismatch_before_tran
   let header_merkle_root = <<0:256>>
   let computed_merkle_root = compute_transaction_merkle_root(txs)
   let block_bytes =
-    assemble_block_bytes_with_merkle_root(txs, header_merkle_root)
+    build_mined_regtest_block_bytes_with_merkle_root(txs, header_merkle_root)
 
   assert header_merkle_root != computed_merkle_root
   let assert Ok(parsed_block) =
@@ -678,7 +686,7 @@ pub fn validate_context_free_consensus_collects_merkle_root_mismatch_before_tran
 pub fn validate_context_free_consensus_upgrades_valid_transactions_and_preserves_wire_order_test() {
   let coinbase_tx = build_valid_coinbase_legacy_transaction_bytes(1)
   let regular_tx = build_valid_legacy_transaction_bytes(2, <<>>)
-  let block_bytes = assemble_block_bytes([coinbase_tx, regular_tx])
+  let block_bytes = build_mined_regtest_block_bytes([coinbase_tx, regular_tx])
 
   let assert Ok(parsed_block) =
     deserialize_with_limits(block_bytes, bit_array.byte_size(block_bytes), 2)
@@ -704,10 +712,7 @@ pub fn validate_context_free_consensus_upgrades_valid_transactions_and_preserves
 // Helpers
 // ============================================================================
 
-fn build_block_header_bytes(merkle_root: BitArray) -> BitArray {
-  build_mined_regtest_header_bytes(merkle_root, 0)
-}
-
+/// Search from the supplied nonce for a header satisfying the regtest target.
 fn build_mined_regtest_header_bytes(
   merkle_root: BitArray,
   nonce: Int,
@@ -727,49 +732,50 @@ fn build_mined_regtest_header_bytes(
   }
 }
 
+/// Encode a zero-version header with the supplied Merkle root, target, and nonce.
 fn build_block_header_bytes_with_compact_target(
   merkle_root: BitArray,
   compact_target: Int,
   nonce: Int,
 ) -> BitArray {
   let assert <<_:256-bits>> = merkle_root
-  <<
-    0:little-size(32),
-    0:size(256),
-    merkle_root:bits,
-    0:little-size(32),
-    compact_target:little-size(32),
-    nonce:little-size(32),
-  >>
+  bitcoin_wire.build_block_header_bytes(
+    0,
+    <<0:size(256)>>,
+    merkle_root,
+    0,
+    compact_target,
+    nonce,
+  )
 }
 
-fn assemble_block_bytes_with_compact_target(
+/// Compute the Merkle root and encode the supplied target with nonce zero.
+fn build_unmined_block_bytes_with_compact_target(
   transactions: List(BitArray),
   compact_target: Int,
 ) -> BitArray {
   let merkle_root = compute_transaction_merkle_root(transactions)
 
-  <<
-    build_block_header_bytes_with_compact_target(merkle_root, compact_target, 0):bits,
-    compact_size(list.length(transactions)):bits,
-    bit_array.concat(transactions):bits,
-  >>
+  bitcoin_wire.assemble_block_bytes(
+    build_block_header_bytes_with_compact_target(merkle_root, compact_target, 0),
+    transactions,
+  )
 }
 
-fn assemble_block_bytes(transactions: List(BitArray)) -> BitArray {
+/// Compute the Merkle root and mine a regtest header, starting at nonce zero.
+fn build_mined_regtest_block_bytes(transactions: List(BitArray)) -> BitArray {
   let merkle_root = compute_transaction_merkle_root(transactions)
-
-  assemble_block_bytes_with_merkle_root(transactions, merkle_root)
+  build_mined_regtest_block_bytes_with_merkle_root(transactions, merkle_root)
 }
 
-fn assemble_block_bytes_with_merkle_root(
+/// Use the supplied Merkle root and mine a regtest header from nonce zero.
+fn build_mined_regtest_block_bytes_with_merkle_root(
   transactions: List(BitArray),
   merkle_root: BitArray,
 ) -> BitArray {
-  assemble_block_from_transaction_payload_bytes(
-    list.length(transactions),
-    merkle_root,
-    bit_array.concat(transactions),
+  bitcoin_wire.assemble_block_bytes(
+    build_mined_regtest_header_bytes(merkle_root, 0),
+    transactions,
   )
 }
 
@@ -781,16 +787,17 @@ fn build_mutated_transactions() -> List(BitArray) {
   [coinbase, tx_a, tx_b, tx_b]
 }
 
-fn assemble_block_from_transaction_payload_bytes(
+/// Preserve the explicit count, root, and payload; mine a regtest header from zero.
+fn build_mined_regtest_block_from_transaction_payload_bytes(
   transaction_count: Int,
   merkle_root: BitArray,
   transaction_payload: BitArray,
 ) -> BitArray {
-  <<
-    build_block_header_bytes(merkle_root):bits,
-    compact_size(transaction_count):bits,
-    transaction_payload:bits,
-  >>
+  bitcoin_wire.assemble_block_from_transaction_payload_bytes(
+    build_mined_regtest_header_bytes(merkle_root, 0),
+    transaction_count,
+    transaction_payload,
+  )
 }
 
 fn compute_transaction_merkle_root(transactions: List(BitArray)) -> BitArray {
@@ -846,14 +853,16 @@ fn build_legacy_transaction_bytes(
   script_sig: BitArray,
   script_pubkey: BitArray,
 ) -> BitArray {
-  let input = build_input_bytes(<<1, 0:size(248)>>, 0, script_sig, 0)
-  let output = build_output_bytes(<<0:little-size(64)>>, script_pubkey)
+  let input =
+    bitcoin_wire.build_input_bytes(<<1, 0:size(248)>>, 0, script_sig, 0)
+  let output =
+    bitcoin_wire.build_output_bytes(<<0:little-size(64)>>, script_pubkey)
 
   <<
     version:little-size(32),
-    compact_size(1):bits,
+    bitcoin_wire.compact_size(1):bits,
     input:bits,
-    compact_size(1):bits,
+    bitcoin_wire.compact_size(1):bits,
     output:bits,
     0:little-size(32),
   >>
@@ -868,14 +877,16 @@ fn build_coinbase_legacy_transaction_bytes(
   script_sig: BitArray,
   script_pubkey: BitArray,
 ) -> BitArray {
-  let input = build_input_bytes(<<0:size(256)>>, 0xFFFFFFFF, script_sig, 0)
-  let output = build_output_bytes(<<0:little-size(64)>>, script_pubkey)
+  let input =
+    bitcoin_wire.build_input_bytes(<<0:size(256)>>, 0xFFFFFFFF, script_sig, 0)
+  let output =
+    bitcoin_wire.build_output_bytes(<<0:little-size(64)>>, script_pubkey)
 
   <<
     version:little-size(32),
-    compact_size(1):bits,
+    bitcoin_wire.compact_size(1):bits,
     input:bits,
-    compact_size(1):bits,
+    bitcoin_wire.compact_size(1):bits,
     output:bits,
     0:little-size(32),
   >>
@@ -884,13 +895,13 @@ fn build_coinbase_legacy_transaction_bytes(
 fn build_legacy_sigop_boundary_transactions(
   extra_sigops: Int,
 ) -> List(BitArray) {
-  let ten_thousand_sigops = repeat_byte(0xAC, 10_000)
+  let ten_thousand_sigops = bitcoin_wire.repeat_byte(0xAC, 10_000)
 
   [
     build_coinbase_legacy_transaction_bytes(1, <<0, 1>>, ten_thousand_sigops),
     build_legacy_transaction_bytes(
       2,
-      repeat_byte(0xAC, extra_sigops),
+      bitcoin_wire.repeat_byte(0xAC, extra_sigops),
       ten_thousand_sigops,
     ),
   ]
@@ -900,16 +911,17 @@ fn build_invalid_coinbase_with_multiple_inputs_transaction_bytes(
   version: Int,
 ) -> BitArray {
   let coinbase_input =
-    build_input_bytes(<<0:size(256)>>, 0xFFFFFFFF, <<0, 1>>, 0)
-  let regular_input = build_input_bytes(<<1, 0:size(248)>>, 0, <<>>, 0)
-  let output = build_output_bytes(<<0:little-size(64)>>, <<>>)
+    bitcoin_wire.build_input_bytes(<<0:size(256)>>, 0xFFFFFFFF, <<0, 1>>, 0)
+  let regular_input =
+    bitcoin_wire.build_input_bytes(<<1, 0:size(248)>>, 0, <<>>, 0)
+  let output = bitcoin_wire.build_output_bytes(<<0:little-size(64)>>, <<>>)
 
   <<
     version:little-size(32),
-    compact_size(2):bits,
+    bitcoin_wire.compact_size(2):bits,
     coinbase_input:bits,
     regular_input:bits,
-    compact_size(1):bits,
+    bitcoin_wire.compact_size(1):bits,
     output:bits,
     0:little-size(32),
   >>
@@ -935,11 +947,14 @@ fn build_base_size_boundary_block_bytes(
 
 fn build_base_size_over_weight_limit_block_bytes() -> BitArray {
   let output_script = <<0:size(128)>>
-  let input = build_input_bytes(<<1, 0:size(248)>>, 0, <<>>, 0)
-  let output = build_output_bytes(<<0:little-size(64)>>, output_script)
-  let witness_stack = <<compact_size(1000):bits, 0:size(8000)>>
+  let input = bitcoin_wire.build_input_bytes(<<1, 0:size(248)>>, 0, <<>>, 0)
+  let output =
+    bitcoin_wire.build_output_bytes(<<0:little-size(64)>>, output_script)
+  let witness_stack = <<bitcoin_wire.compact_size(1000):bits, 0:size(8000)>>
   let base_equivalent_segwit_tx =
-    assemble_segwit_transaction_bytes([input], [output], [witness_stack])
+    bitcoin_wire.assemble_segwit_transaction_bytes([input], [output], [
+      witness_stack,
+    ])
 
   build_base_size_boundary_block_with_padded_transaction_bytes(
     base_equivalent_segwit_tx,
@@ -960,7 +975,7 @@ fn build_base_size_boundary_block_with_padded_transaction_bytes(
     })
 
   let txs = [coinbase_tx, padded_tx, ..normal_txs]
-  assemble_block_bytes(txs)
+  build_mined_regtest_block_bytes(txs)
 }
 
 fn deserialize_with_limits(
