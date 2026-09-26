@@ -5,36 +5,32 @@ import btc_parser/transaction.{
 }
 import gleam/bit_array
 import gleam/list
-import support/bitcoin_wire.{compact_size}
-import support/transaction_wire.{
-  build_minimal_input_section_bytes, build_output_bytes, repeat_byte,
-  transaction_version_1_bytes,
-}
+import support/bitcoin_wire
 
 // ============================================================================
 // Fixed templates
 // ============================================================================
 
 pub fn classify_output_script_p2pkh_test() {
-  let hash = repeat_byte(0xAA, 20)
+  let hash = bitcoin_wire.repeat_byte(0xAA, 20)
   let script_bytes = <<0x76, 0xA9, 0x14, hash:bits, 0x88, 0xAC>>
   check_output_script_classification(script_bytes, P2PKH)
 }
 
 pub fn classify_output_script_p2sh_test() {
-  let hash = repeat_byte(0xBB, 20)
+  let hash = bitcoin_wire.repeat_byte(0xBB, 20)
   let script_bytes = <<0xA9, 0x14, hash:bits, 0x87>>
   check_output_script_classification(script_bytes, P2SH)
 }
 
 pub fn classify_output_script_p2pk_compressed_test() {
-  let pubkey = repeat_byte(0x02, 33)
+  let pubkey = bitcoin_wire.repeat_byte(0x02, 33)
   let script_bytes = <<0x21, pubkey:bits, 0xAC>>
   check_output_script_classification(script_bytes, P2PK)
 }
 
 pub fn classify_output_script_p2pk_uncompressed_test() {
-  let pubkey = repeat_byte(0x04, 65)
+  let pubkey = bitcoin_wire.repeat_byte(0x04, 65)
   let script_bytes = <<0x41, pubkey:bits, 0xAC>>
   check_output_script_classification(script_bytes, P2PK)
 }
@@ -103,7 +99,7 @@ pub fn classify_output_script_nulldata_truncated_pushdata4_is_unrecognized_test(
 }
 
 pub fn classify_output_script_nulldata_ignores_legacy_relay_size_limit_test() {
-  let data = repeat_byte(0xAB, 81)
+  let data = bitcoin_wire.repeat_byte(0xAB, 81)
   let script_bytes = <<0x6A, 0x4C, 81, data:bits>>
 
   check_output_script_classification(script_bytes, NullData)
@@ -114,15 +110,15 @@ pub fn classify_output_script_nulldata_ignores_legacy_relay_size_limit_test() {
 // ============================================================================
 
 pub fn classify_output_script_bare_multisig_1of1_test() {
-  let pubkey = repeat_byte(0xAA, 33)
+  let pubkey = bitcoin_wire.repeat_byte(0xAA, 33)
   let script_bytes = <<0x51, 0x21, pubkey:bits, 0x51, 0xAE>>
   check_output_script_classification(script_bytes, BareMultisig)
 }
 
 pub fn classify_output_script_bare_multisig_2of3_test() {
-  let pubkey1 = repeat_byte(0xAA, 33)
-  let pubkey2 = repeat_byte(0xBB, 33)
-  let pubkey3 = repeat_byte(0xCC, 33)
+  let pubkey1 = bitcoin_wire.repeat_byte(0xAA, 33)
+  let pubkey2 = bitcoin_wire.repeat_byte(0xBB, 33)
+  let pubkey3 = bitcoin_wire.repeat_byte(0xCC, 33)
   let script_bytes = <<
     0x52, 0x21, pubkey1:bits, 0x21, pubkey2:bits, 0x21, pubkey3:bits, 0x53, 0xAE,
   >>
@@ -130,9 +126,9 @@ pub fn classify_output_script_bare_multisig_2of3_test() {
 }
 
 pub fn classify_output_script_bare_multisig_3of3_test() {
-  let pubkey1 = repeat_byte(0xAA, 33)
-  let pubkey2 = repeat_byte(0xBB, 33)
-  let pubkey3 = repeat_byte(0xCC, 33)
+  let pubkey1 = bitcoin_wire.repeat_byte(0xAA, 33)
+  let pubkey2 = bitcoin_wire.repeat_byte(0xBB, 33)
+  let pubkey3 = bitcoin_wire.repeat_byte(0xCC, 33)
   let script_bytes = <<
     0x53, 0x21, pubkey1:bits, 0x21, pubkey2:bits, 0x21, pubkey3:bits, 0x53, 0xAE,
   >>
@@ -204,8 +200,8 @@ pub fn classify_output_script_bare_multisig_does_not_validate_key_contents_test(
 
 pub fn classify_output_script_bare_multisig_invalid_m_gt_n_test() {
   // OP_3 <2 pubkeys> OP_2 OP_CHECKMULTISIG — m(3) > n(2), invalid
-  let pubkey1 = repeat_byte(0xAA, 33)
-  let pubkey2 = repeat_byte(0xBB, 33)
+  let pubkey1 = bitcoin_wire.repeat_byte(0xAA, 33)
+  let pubkey2 = bitcoin_wire.repeat_byte(0xBB, 33)
   let script_bytes = <<
     0x53, 0x21, pubkey1:bits, 0x21, pubkey2:bits, 0x52, 0xAE,
   >>
@@ -215,10 +211,10 @@ pub fn classify_output_script_bare_multisig_invalid_m_gt_n_test() {
 pub fn classify_output_script_bare_multisig_4of4_ignores_relay_policy_test() {
   // A 4-of-4 script is structurally recognised even though Core's relay
   // policy separately limits bare multisig standardness to at most 3 keys.
-  let pubkey1 = repeat_byte(0xAA, 33)
-  let pubkey2 = repeat_byte(0xBB, 33)
-  let pubkey3 = repeat_byte(0xCC, 33)
-  let pubkey4 = repeat_byte(0xDD, 33)
+  let pubkey1 = bitcoin_wire.repeat_byte(0xAA, 33)
+  let pubkey2 = bitcoin_wire.repeat_byte(0xBB, 33)
+  let pubkey3 = bitcoin_wire.repeat_byte(0xCC, 33)
+  let pubkey4 = bitcoin_wire.repeat_byte(0xDD, 33)
   let script_bytes = <<
     0x54,
     0x21,
@@ -293,7 +289,7 @@ pub fn classify_output_script_bare_multisig_incorrect_key_payload_size_is_unreco
   let script_bytes = <<
     0x51,
     0x20,
-    repeat_byte(0xAA, 32):bits,
+    bitcoin_wire.repeat_byte(0xAA, 32):bits,
     0x51,
     0xAE,
   >>
@@ -302,7 +298,7 @@ pub fn classify_output_script_bare_multisig_incorrect_key_payload_size_is_unreco
 }
 
 pub fn classify_output_script_bare_multisig_truncated_key_push_is_unrecognized_test() {
-  let script_bytes = <<0x51, 0x21, repeat_byte(0xAA, 32):bits>>
+  let script_bytes = <<0x51, 0x21, bitcoin_wire.repeat_byte(0xAA, 32):bits>>
 
   check_output_script_classification(script_bytes, Unrecognized)
 }
@@ -330,19 +326,19 @@ pub fn classify_output_script_bare_multisig_trailing_opcode_is_unrecognized_test
 // ============================================================================
 
 pub fn classify_output_script_p2wpkh_test() {
-  let hash = repeat_byte(0xCC, 20)
+  let hash = bitcoin_wire.repeat_byte(0xCC, 20)
   let script_bytes = <<0x00, 0x14, hash:bits>>
   check_output_script_classification(script_bytes, P2WPKH)
 }
 
 pub fn classify_output_script_p2wsh_test() {
-  let hash = repeat_byte(0xDD, 32)
+  let hash = bitcoin_wire.repeat_byte(0xDD, 32)
   let script_bytes = <<0x00, 0x20, hash:bits>>
   check_output_script_classification(script_bytes, P2WSH)
 }
 
 pub fn classify_output_script_p2tr_test() {
-  let pubkey = repeat_byte(0xEE, 32)
+  let pubkey = bitcoin_wire.repeat_byte(0xEE, 32)
   let script_bytes = <<0x51, 0x20, pubkey:bits>>
   check_output_script_classification(script_bytes, P2TR)
 }
@@ -364,7 +360,7 @@ pub fn classify_output_script_length_mismatched_p2a_is_unrecognized_test() {
 
 pub fn classify_output_script_other_witness_program_v1_non_taproot_test() {
   // OP_1 with a 20-byte program — valid witness v1 but not Taproot (which requires 32 bytes)
-  let program = repeat_byte(0xFF, 20)
+  let program = bitcoin_wire.repeat_byte(0xFF, 20)
   let script_bytes = <<0x51, 0x14, program:bits>>
   check_output_script_classification(
     script_bytes,
@@ -373,7 +369,7 @@ pub fn classify_output_script_other_witness_program_v1_non_taproot_test() {
 }
 
 pub fn classify_output_script_other_witness_program_v2_test() {
-  let program = repeat_byte(0xFF, 32)
+  let program = bitcoin_wire.repeat_byte(0xFF, 32)
   let script_bytes = <<0x52, 0x20, program:bits>>
   check_output_script_classification(
     script_bytes,
@@ -382,7 +378,7 @@ pub fn classify_output_script_other_witness_program_v2_test() {
 }
 
 pub fn classify_output_script_other_witness_program_v16_test() {
-  let program = repeat_byte(0xFF, 20)
+  let program = bitcoin_wire.repeat_byte(0xFF, 20)
   let script_bytes = <<0x60, 0x14, program:bits>>
   check_output_script_classification(
     script_bytes,
@@ -393,7 +389,7 @@ pub fn classify_output_script_other_witness_program_v16_test() {
 pub fn classify_output_script_other_witness_program_v1_different_two_byte_program_test() {
   // The shortest valid version-1 program remains the generic fallback unless
   // its two bytes are the exact P2A `4E 73` program.
-  let program = repeat_byte(0xFF, 2)
+  let program = bitcoin_wire.repeat_byte(0xFF, 2)
   let script_bytes = <<0x51, 0x02, program:bits>>
   check_output_script_classification(
     script_bytes,
@@ -402,7 +398,7 @@ pub fn classify_output_script_other_witness_program_v1_different_two_byte_progra
 }
 
 pub fn classify_output_script_other_witness_program_v1_max_program_test() {
-  let program = repeat_byte(0xFF, 40)
+  let program = bitcoin_wire.repeat_byte(0xFF, 40)
   let script_bytes = <<0x51, 0x28, program:bits>>
   check_output_script_classification(
     script_bytes,
@@ -411,24 +407,24 @@ pub fn classify_output_script_other_witness_program_v1_max_program_test() {
 }
 
 pub fn classify_output_script_witness_v1_one_byte_program_is_unrecognized_test() {
-  let program = repeat_byte(0xFF, 1)
+  let program = bitcoin_wire.repeat_byte(0xFF, 1)
   let script_bytes = <<0x51, 0x01, program:bits>>
   check_output_script_classification(script_bytes, Unrecognized)
 }
 
 pub fn classify_output_script_witness_v1_41_byte_program_is_unrecognized_test() {
-  let program = repeat_byte(0xFF, 41)
+  let program = bitcoin_wire.repeat_byte(0xFF, 41)
   let script_bytes = <<0x51, 0x29, program:bits>>
   check_output_script_classification(script_bytes, Unrecognized)
 }
 
 pub fn classify_output_script_witness_v0_invalid_program_lengths_are_unrecognized_test() {
-  let program_2 = <<0x00, 0x02, repeat_byte(0xFF, 2):bits>>
-  let program_19 = <<0x00, 0x13, repeat_byte(0xFF, 19):bits>>
-  let program_21 = <<0x00, 0x15, repeat_byte(0xFF, 21):bits>>
-  let program_31 = <<0x00, 0x1F, repeat_byte(0xFF, 31):bits>>
-  let program_33 = <<0x00, 0x21, repeat_byte(0xFF, 33):bits>>
-  let program_40 = <<0x00, 0x28, repeat_byte(0xFF, 40):bits>>
+  let program_2 = <<0x00, 0x02, bitcoin_wire.repeat_byte(0xFF, 2):bits>>
+  let program_19 = <<0x00, 0x13, bitcoin_wire.repeat_byte(0xFF, 19):bits>>
+  let program_21 = <<0x00, 0x15, bitcoin_wire.repeat_byte(0xFF, 21):bits>>
+  let program_31 = <<0x00, 0x1F, bitcoin_wire.repeat_byte(0xFF, 31):bits>>
+  let program_33 = <<0x00, 0x21, bitcoin_wire.repeat_byte(0xFF, 33):bits>>
+  let program_40 = <<0x00, 0x28, bitcoin_wire.repeat_byte(0xFF, 40):bits>>
 
   check_output_script_classification(program_2, Unrecognized)
   check_output_script_classification(program_19, Unrecognized)
@@ -453,7 +449,7 @@ pub fn classify_output_script_empty_test() {
 }
 
 // ============================================================================
-// Test helpers
+// Helpers
 // ============================================================================
 
 /// Build and deserialize a minimal transaction containing only the given
@@ -462,13 +458,14 @@ pub fn classify_output_script_empty_test() {
 fn output_script_from_bytes(
   script_pubkey_bytes: BitArray,
 ) -> ScriptBytes(OutputScript) {
-  let output = build_output_bytes(<<0:little-size(64)>>, script_pubkey_bytes)
+  let output =
+    bitcoin_wire.build_output_bytes(<<0:little-size(64)>>, script_pubkey_bytes)
   let lock_time = <<0:little-size(32)>>
   let assert Ok(tx) =
     transaction.deserialize(<<
-      transaction_version_1_bytes:bits,
-      build_minimal_input_section_bytes():bits,
-      compact_size(1):bits,
+      bitcoin_wire.transaction_version_1_bytes:bits,
+      bitcoin_wire.build_minimal_input_section_bytes():bits,
+      bitcoin_wire.compact_size(1):bits,
       output:bits,
       lock_time:bits,
     >>)
@@ -534,7 +531,7 @@ fn encode_multisig_count(value: Int) -> BitArray {
 /// Build a key payload push using direct, `OP_PUSHDATA1`, `OP_PUSHDATA2`, or
 /// `OP_PUSHDATA4` encoding, filled with a repeated byte.
 fn key_push(encoding: Int, payload_size: Int, fill: Int) -> BitArray {
-  let payload = repeat_byte(fill, payload_size)
+  let payload = bitcoin_wire.repeat_byte(fill, payload_size)
 
   case encoding {
     1 -> <<payload_size:little-size(8), payload:bits>>
