@@ -1,20 +1,20 @@
-name = "btc_parser"
+name = "bitcoin_wire"
 version = "1.0.0"
 
-description = "Deserialize, inspect, and structurally validate Bitcoin wire-format data in Gleam."
+description = "Deserialize, inspect, hash, serialize, and perform context-free checks on Bitcoin transactions and blocks in Gleam."
 licences = ["MIT"]
 
 gleam = ">= 1.16.0"
 target = "erlang"
 internal_modules = [
-  "btc_parser/internal",
-  "btc_parser/internal/*",
+  "bitcoin_wire/internal",
+  "bitcoin_wire/internal/*",
 ]
 
 [repository]
 type = "github"
 user = "caquinn7"
-repo = "btc-parser"
+repo = "bitcoin-wire"
 
 [[documentation.pages]]
 title = "Transaction guide"

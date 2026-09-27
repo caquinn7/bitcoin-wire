@@ -1,7 +1,7 @@
 //// Test-only assertions for block and transaction decode errors.
 
-import btc_parser/block
-import btc_parser/transaction
+import bitcoin_wire/block
+import bitcoin_wire/transaction
 
 /// Assert the common location details of a block decode error and return its kind.
 pub fn check_block_decode_error(

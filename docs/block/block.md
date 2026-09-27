@@ -1,4 +1,4 @@
-# `btc_parser/block`
+# `bitcoin_wire/block`
 
 The block domain deserializes, inspects, validates, and serializes Bitcoin
 blocks while preserving Bitcoin's wire representation.
@@ -27,9 +27,9 @@ blocks while preserving Bitcoin's wire representation.
 ## Quick Start
 
 ```gleam
-import btc_parser/block
-import btc_parser/hash256
-import btc_parser/transaction
+import bitcoin_wire/block
+import bitcoin_wire/hash256
+import bitcoin_wire/transaction
 import gleam/result
 
 pub fn display_block_hash_from_bytes(
@@ -119,5 +119,5 @@ scope.
 ## Documentation
 
 - [Merkle root](merkle_root.md)
-- [Transaction domain](https://github.com/caquinn7/btc-parser/blob/main/docs/transaction/transaction.md)
-- [Project overview](https://github.com/caquinn7/btc-parser)
+- [Transaction domain](https://github.com/caquinn7/bitcoin-wire/blob/main/docs/transaction/transaction.md)
+- [Project overview](https://github.com/caquinn7/bitcoin-wire)

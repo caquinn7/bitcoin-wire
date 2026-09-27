@@ -4,7 +4,7 @@ A Bitcoin block header does not contain every transaction. Instead, it contains
 one 32-byte value that commits to the block's ordered transaction list: the
 transaction Merkle root.
 
-`btc_parser` computes this value with `block.compute_merkle_root`. The function
+`bitcoin_wire` computes this value with `block.compute_merkle_root`. The function
 also reports whether the tree has Bitcoin's historical duplicate-hash ambiguity
 by returning either `NonMutated(root)` or `Mutated(root)`.
 
@@ -207,8 +207,8 @@ transaction.
 state when inspecting it:
 
 ```gleam
-import btc_parser/block
-import btc_parser/hash256
+import bitcoin_wire/block
+import bitcoin_wire/hash256
 
 case block.compute_merkle_root(parsed_block) {
   block.NonMutated(root) ->

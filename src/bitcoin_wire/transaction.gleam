@@ -1,0 +1,2851 @@
+//// Deserialize, inspect, validate, and serialize Bitcoin transactions.
+
+import bitcoin_wire/hash256.{type Hash256}
+import bitcoin_wire/internal/compact_size
+import bitcoin_wire/internal/decode
+import bitcoin_wire/internal/double_sha256
+import bitcoin_wire/internal/fixed_int/int64
+import bitcoin_wire/internal/fixed_int/uint64.{type Uint64}
+import bitcoin_wire/internal/lifecycle
+import bitcoin_wire/internal/parser.{type Parser}
+import bitcoin_wire/internal/reader.{type Reader}
+import gleam/bit_array
+import gleam/bool
+import gleam/dict.{type Dict}
+import gleam/int
+import gleam/list
+import gleam/option.{type Option, None, Some}
+import gleam/pair
+import gleam/result
+
+// ==============================================================================
+// Transaction types
+// ==============================================================================
+
+/// Phantom type indicating a transaction that has been successfully parsed
+/// from its canonical Bitcoin wire-format serialization but has not yet been
+/// validated against Bitcoin consensus rules.
+pub type Parsed =
+  lifecycle.Parsed
+
+/// Phantom type indicating a transaction that has passed the context-free
+/// Bitcoin consensus checks performed by `validate_context_free_consensus`.
+///
+/// This does not indicate full transaction validity. Context-dependent checks
+/// such as script execution, signature verification, and UTXO lookup are not
+/// performed.
+pub type ContextFreeValidated =
+  lifecycle.ContextFreeValidated
+
+/// A Bitcoin transaction.
+///
+/// A transaction transfers value by consuming previously created outputs
+/// (inputs) and creating new outputs. Transactions are either legacy
+/// (pre-SegWit) or SegWit, which affects whether witness data is present
+/// in the serialized structure.
+pub opaque type Transaction(state) {
+  Legacy(
+    /// The unsigned 32-bit transaction version.
+    version: Int,
+    /// The number of transaction inputs.
+    input_count: Int,
+    /// The transaction inputs in wire order.
+    inputs: List(Input),
+    /// The number of transaction outputs.
+    output_count: Int,
+    /// The transaction outputs in wire order.
+    outputs: List(Output),
+    /// The unsigned 32-bit lock-time value.
+    lock_time: Int,
+  )
+  Segwit(
+    /// The unsigned 32-bit transaction version.
+    version: Int,
+    /// The number of transaction inputs.
+    input_count: Int,
+    /// The transaction inputs in wire order.
+    inputs: List(Input),
+    /// The number of transaction outputs.
+    output_count: Int,
+    /// The transaction outputs in wire order.
+    outputs: List(Output),
+    /// The unsigned 32-bit lock-time value.
+    lock_time: Int,
+    /// One witness stack per input, in input order.
+    witnesses: List(WitnessStack),
+  )
+}
+
+/// Get the transaction version.
+///
+/// The version may affect which consensus rules or transaction semantics apply.
+///
+/// The version field is encoded as 4 little-endian bytes in the transaction
+/// wire format. This function returns those bytes interpreted as an unsigned
+/// 32-bit integer in the range `0` through `4_294_967_295`.
+///
+/// Some Bitcoin documentation and APIs have represented this field as a signed
+/// 32-bit integer. This function does not use that convention.
+///
+/// For example, raw version bytes `ff ff ff ff` are returned as
+/// `4_294_967_295`, not `-1`.
+pub fn get_version(tx: Transaction(state)) -> Int {
+  tx.version
+}
+
+/// Check whether a transaction uses the SegWit format.
+///
+/// SegWit (Segregated Witness) transactions separate witness data from the main
+/// transaction structure, enabling features like improved scalability and
+/// transaction malleability fixes.
+///
+/// Returns `True` for SegWit transactions, `False` for legacy transactions.
+pub fn is_segwit(tx: Transaction(state)) -> Bool {
+  case tx {
+    Legacy(..) -> False
+    Segwit(..) -> True
+  }
+}
+
+/// Check whether a context-free-validated transaction has coinbase shape.
+///
+/// The `ContextFreeValidated` state guarantees that transaction-local consensus
+/// checks have already been applied. For this function, `True` means the
+/// transaction has the context-free coinbase structure:
+///
+/// - exactly one input
+/// - the input uses the null outpoint
+/// - the coinbase scriptSig length is within the consensus range
+///
+/// This does not prove that the transaction is valid as the coinbase
+/// transaction of a block. Block-level checks such as transaction position,
+/// block height, subsidy, and fees are outside the scope of this function.
+///
+/// Returns `True` if the transaction has coinbase shape, `False` otherwise.
+pub fn has_coinbase_shape(tx: Transaction(ContextFreeValidated)) -> Bool {
+  has_coinbase_marker(tx)
+}
+
+/// Return whether any input has the coinbase marker (null outpoint).
+fn has_coinbase_marker(tx: Transaction(state)) -> Bool {
+  list.any(tx.inputs, input_has_null_outpoint)
+}
+
+/// Get the number of inputs in a transaction.
+///
+/// Returns the decoded `CompactSize` input count from the transaction wire encoding.
+pub fn get_input_count(tx: Transaction(state)) -> Int {
+  tx.input_count
+}
+
+/// Get the transaction inputs.
+///
+/// Returns the inputs in the same order they appear in the transaction serialization.
+pub fn get_inputs(tx: Transaction(state)) -> List(Input) {
+  tx.inputs
+}
+
+/// Get the number of outputs in a transaction.
+///
+/// Returns the decoded `CompactSize` output count from the transaction wire encoding.
+pub fn get_output_count(tx: Transaction(state)) -> Int {
+  tx.output_count
+}
+
+/// Get the transaction outputs.
+///
+/// Returns the outputs in the same order they appear in the transaction serialization.
+pub fn get_outputs(tx: Transaction(state)) -> List(Output) {
+  tx.outputs
+}
+
+/// Get the unsigned 32-bit lock-time value from a transaction.
+///
+/// Values less than 500,000,000 encode block heights, values greater than or
+/// equal to 500,000,000 encode Unix timestamps, and zero encodes no lock-time
+/// constraint.
+///
+/// Whether this value constrains transaction finality also depends on the input
+/// sequence numbers and block context. This library exposes the value without
+/// evaluating finality.
+pub fn get_lock_time(tx: Transaction(state)) -> Int {
+  tx.lock_time
+}
+
+/// Get the witness stacks from a SegWit transaction.
+///
+/// For SegWit transactions, the witness stacks are returned in order,
+/// corresponding 1-to-1 with the transaction inputs by position.
+///
+/// ## Returns
+///
+/// - `Ok(witnesses)`: The transaction uses SegWit serialization.
+/// - `Error(Nil)`: The transaction uses legacy serialization, which does not
+///   contain witness data.
+pub fn get_witnesses(
+  tx: Transaction(state),
+) -> Result(List(WitnessStack), Nil) {
+  case tx {
+    Segwit(witnesses:, ..) -> Ok(witnesses)
+    Legacy(..) -> Error(Nil)
+  }
+}
+
+/// Compute the transaction's BIP 141 base size in bytes.
+///
+/// This is the byte size of the complete canonical stripped serialization
+/// produced by `serialize_stripped`. For legacy transactions, it is identical
+/// to `compute_total_size`. For SegWit transactions, it excludes the marker,
+/// flag, and all witness stack bytes.
+///
+/// This calculation measures the existing transaction fields without allocating
+/// a serialized `BitArray`.
+pub fn compute_base_size(tx: Transaction(state)) -> Int {
+  let version_size = 4
+  let lock_time_size = 4
+
+  version_size
+  + compact_size.encoded_size(tx.input_count)
+  + compute_inputs_stripped_size(tx.inputs)
+  + compact_size.encoded_size(tx.output_count)
+  + compute_outputs_stripped_size(tx.outputs)
+  + lock_time_size
+}
+
+fn compute_inputs_stripped_size(inputs: List(Input)) -> Int {
+  compute_inputs_stripped_size_loop(inputs, 0)
+}
+
+fn compute_inputs_stripped_size_loop(inputs: List(Input), acc: Int) -> Int {
+  case inputs {
+    [] -> acc
+    [input, ..rest] -> {
+      let input_size = {
+        let txid_size = 32
+        let vout_size = 4
+        let script_size = get_script_size(input.script_sig)
+        let sequence_size = 4
+
+        txid_size
+        + vout_size
+        + compact_size.encoded_size(script_size)
+        + script_size
+        + sequence_size
+      }
+      compute_inputs_stripped_size_loop(rest, acc + input_size)
+    }
+  }
+}
+
+fn compute_outputs_stripped_size(outputs: List(Output)) -> Int {
+  compute_outputs_stripped_size_loop(outputs, 0)
+}
+
+fn compute_outputs_stripped_size_loop(outputs: List(Output), acc: Int) -> Int {
+  case outputs {
+    [] -> acc
+    [output, ..rest] -> {
+      let output_size = {
+        let value_size = 8
+        let script_size = get_script_size(output.script_pubkey)
+        value_size + compact_size.encoded_size(script_size) + script_size
+      }
+      compute_outputs_stripped_size_loop(rest, acc + output_size)
+    }
+  }
+}
+
+/// Compute the transaction's BIP 141 total size in bytes.
+///
+/// This is the byte size of the complete canonical wire serialization produced
+/// by `serialize`. For legacy transactions, it is identical to
+/// `compute_base_size`. For SegWit transactions, it also includes the marker,
+/// flag, and all witness stack bytes.
+///
+/// This calculation measures the existing transaction fields without allocating
+/// a serialized `BitArray`.
+pub fn compute_total_size(tx: Transaction(state)) -> Int {
+  case tx {
+    Legacy(..) -> compute_base_size(tx)
+    Segwit(witnesses:, ..) -> {
+      let segwit_marker_and_flag_size = 2
+
+      compute_base_size(tx)
+      + segwit_marker_and_flag_size
+      + compute_witnesses_size(witnesses)
+    }
+  }
+}
+
+/// Compute the transaction's BIP 141 weight in weight units.
+///
+/// Weight is calculated as `base_size * 3 + total_size`. Equivalently, each
+/// byte in the stripped serialization contributes four weight units and each
+/// byte present only in the complete serialization contributes one.
+///
+/// This calculation measures the existing transaction fields without allocating
+/// a serialized `BitArray` or measuring the base fields more than once.
+///
+/// This function only measures the transaction. It does not enforce the
+/// enclosing block's consensus weight limit.
+pub fn compute_weight(tx: Transaction(state)) -> Int {
+  let witness_scale_factor = 4
+  let base_size = compute_base_size(tx)
+
+  case tx {
+    Legacy(..) -> base_size * witness_scale_factor
+    Segwit(witnesses:, ..) -> {
+      let segwit_marker_and_flag_size = 2
+
+      base_size
+      * witness_scale_factor
+      + segwit_marker_and_flag_size
+      + compute_witnesses_size(witnesses)
+    }
+  }
+}
+
+/// Compute the transaction's virtual size in virtual bytes (vbytes).
+///
+/// A virtual byte is four weight units. The result is the transaction's BIP 141
+/// weight divided by four and rounded up. For example, a transaction weighing
+/// 665 weight units has a virtual size of 167 vbytes.
+///
+/// This calculation does not allocate a serialized `BitArray` or enforce size
+/// or weight limits.
+pub fn compute_virtual_size(tx: Transaction(state)) -> Int {
+  let weight = compute_weight(tx)
+
+  let weight_units_per_vbyte = 4
+  // Adding one less than the divisor implements ceiling integer division.
+  let weight_with_rounding_offset = weight + weight_units_per_vbyte - 1
+  weight_with_rounding_offset / weight_units_per_vbyte
+}
+
+/// Compute the transaction bytes included in total size but excluded from base
+/// size.
+///
+/// Returns `0` for legacy transactions. For SegWit transactions, this includes
+/// the marker, flag, and serialized witness stacks. The result is equivalent to
+/// `compute_total_size(tx) - compute_base_size(tx)`.
+///
+/// This internal helper is used when calculating block weight during validation.
+@internal
+pub fn compute_witness_serialized_size(tx: Transaction(state)) -> Int {
+  case tx {
+    Legacy(..) -> 0
+    Segwit(witnesses:, ..) -> {
+      let segwit_marker_and_flag_size = 2
+      segwit_marker_and_flag_size + compute_witnesses_size(witnesses)
+    }
+  }
+}
+
+fn compute_witnesses_size(witnesses: List(WitnessStack)) -> Int {
+  compute_witnesses_size_loop(witnesses, 0)
+}
+
+fn compute_witnesses_size_loop(witnesses: List(WitnessStack), acc: Int) -> Int {
+  case witnesses {
+    [] -> acc
+    [stack, ..rest] -> {
+      let stack_size =
+        compact_size.encoded_size(stack.item_count)
+        + compute_witness_items_size(stack.items)
+
+      compute_witnesses_size_loop(rest, acc + stack_size)
+    }
+  }
+}
+
+fn compute_witness_items_size(witness_items: List(WitnessItem)) -> Int {
+  compute_witness_items_size_loop(witness_items, 0)
+}
+
+fn compute_witness_items_size_loop(
+  witness_items: List(WitnessItem),
+  acc: Int,
+) -> Int {
+  case witness_items {
+    [] -> acc
+    [item, ..rest] -> {
+      let item_size =
+        item
+        |> get_witness_item_bytes
+        |> bit_array.byte_size
+
+      let encoded_item_size = compact_size.encoded_size(item_size) + item_size
+
+      compute_witness_items_size_loop(rest, acc + encoded_item_size)
+    }
+  }
+}
+
+/// Count legacy signature operations in a transaction's scriptSigs and
+/// scriptPubKeys.
+///
+/// `OP_CHECKSIG` and `OP_CHECKSIGVERIFY` each count as one operation, while
+/// `OP_CHECKMULTISIG` and `OP_CHECKMULTISIGVERIFY` each count as twenty.
+/// Counting is structural and execution-independent: bytes in valid script
+/// pushes and all witness data are excluded. A malformed push stops scanning
+/// that script and retains its preceding count.
+/// 
+/// This function is internal and is used only to enforce the block-level
+/// legacy sigop limit.
+@internal
+pub fn compute_legacy_sigop_count(tx: Transaction(state)) -> Int {
+  let inputs_sigop_count = compute_sigop_count_for_inputs_loop(tx.inputs, 0)
+  let outputs_sigop_count = compute_sigop_count_for_outputs_loop(tx.outputs, 0)
+  inputs_sigop_count + outputs_sigop_count
+}
+
+fn compute_sigop_count_for_inputs_loop(inputs: List(Input), acc: Int) -> Int {
+  case inputs {
+    [] -> acc
+    [input, ..rest] ->
+      compute_sigop_count_for_inputs_loop(
+        rest,
+        acc + compute_legacy_sigop_count_for_script(input.script_sig),
+      )
+  }
+}
+
+fn compute_sigop_count_for_outputs_loop(
+  outputs: List(Output),
+  acc: Int,
+) -> Int {
+  case outputs {
+    [] -> acc
+    [output, ..rest] ->
+      compute_sigop_count_for_outputs_loop(
+        rest,
+        acc + compute_legacy_sigop_count_for_script(output.script_pubkey),
+      )
+  }
+}
+
+fn compute_legacy_sigop_count_for_script(script: ScriptBytes(k)) -> Int {
+  script
+  |> get_raw_script_bytes
+  |> compute_legacy_sigop_count_for_script_loop(0)
+}
+
+/// Continue structurally counting legacy sigops in the remaining script bytes.
+///
+/// `acc` contains the count before `bytes`. Valid direct and `OP_PUSHDATA*`
+/// pushes are skipped as data. An incomplete length field or payload ends
+/// scanning and returns `acc`, so malformed push remainder bytes are never
+/// interpreted as opcodes.
+fn compute_legacy_sigop_count_for_script_loop(
+  bytes: BitArray,
+  acc: Int,
+) -> Int {
+  case bytes {
+    // empty script - return acc
+    <<>> -> acc
+
+    // direct push (0x01 - 0x4b) - skip the pushed bytes
+    <<i:little, rest:bytes>> if i >= 1 && i <= 75 ->
+      case skip_legacy_sigop_push_data(rest, i) {
+        Some(rest) -> compute_legacy_sigop_count_for_script_loop(rest, acc)
+        None -> acc
+      }
+
+    // OP_PUSHDATA1 - read next 1 byte as n, then skip next n bytes
+    <<0x4C:little, rest:bytes>> ->
+      case rest {
+        <<n:8-little, payload:bytes>> ->
+          case skip_legacy_sigop_push_data(payload, n) {
+            Some(rest) -> compute_legacy_sigop_count_for_script_loop(rest, acc)
+            None -> acc
+          }
+
+        _ -> acc
+      }
+
+    // OP_PUSHDATA2 - read next 2 bytes as n, then skip next n bytes
+    <<0x4D:little, rest:bytes>> ->
+      case rest {
+        <<n:16-little, payload:bytes>> ->
+          case skip_legacy_sigop_push_data(payload, n) {
+            Some(rest) -> compute_legacy_sigop_count_for_script_loop(rest, acc)
+            None -> acc
+          }
+
+        _ -> acc
+      }
+
+    // OP_PUSHDATA4 - read next 4 bytes as n, then skip next n bytes
+    <<0x4E:little, rest:bytes>> ->
+      case rest {
+        <<n:32-little, payload:bytes>> ->
+          case skip_legacy_sigop_push_data(payload, n) {
+            Some(rest) -> compute_legacy_sigop_count_for_script_loop(rest, acc)
+            None -> acc
+          }
+
+        _ -> acc
+      }
+
+    // signature opcode or any other one-byte opcode
+    <<opcode:8-little, rest:bytes>> ->
+      compute_legacy_sigop_count_for_script_loop(
+        rest,
+        acc + legacy_sigop_increment(opcode),
+      )
+
+    // truncated length or push data - stop and return acc
+    _ -> acc
+  }
+}
+
+/// Return the static legacy sigop cost of one script opcode.
+fn legacy_sigop_increment(opcode: Int) -> Int {
+  case opcode {
+    0xAC | 0xAD -> 1
+    0xAE | 0xAF -> 20
+    _ -> 0
+  }
+}
+
+/// Return the bytes remaining after a parsed script push's data.
+///
+/// A truncated payload returns `None`, allowing the caller to end sigop scanning
+/// without interpreting any payload bytes as opcodes.
+fn skip_legacy_sigop_push_data(
+  bytes: BitArray,
+  length: Int,
+) -> Option(BitArray) {
+  case bytes {
+    <<_:bytes-size(length), rest:bytes>> -> Some(rest)
+    _ -> None
+  }
+}
+
+/// A transaction input.
+///
+/// An input references a previous transaction output and provides the data
+/// required to satisfy that output’s spending conditions.
+pub opaque type Input {
+  Input(
+    /// The outpoint being spent, or the null outpoint for a coinbase input.
+    outpoint: OutPoint,
+    /// The raw scriptSig bytes for this input.
+    script_sig: ScriptBytes(InputScript),
+    /// The unsigned 32-bit sequence value encoded for this input.
+    sequence: Int,
+  )
+}
+
+/// Get the outpoint from an input.
+pub fn get_input_outpoint(input: Input) -> OutPoint {
+  input.outpoint
+}
+
+/// Check whether an input contains the null outpoint.
+///
+/// The null outpoint is the structural coinbase input marker. This function
+/// does not establish that the containing transaction has valid coinbase shape.
+/// Use `validate_context_free_consensus` followed by `has_coinbase_shape` for
+/// that guarantee.
+pub fn input_has_null_outpoint(input: Input) -> Bool {
+  is_null_outpoint(input.outpoint)
+}
+
+/// Get the sequence number from an input.
+///
+/// Sequence values can participate in relative lock-time consensus rules and
+/// transaction replacement policy. This library exposes the value without
+/// interpreting those semantics.
+pub fn get_input_sequence(input: Input) -> Int {
+  input.sequence
+}
+
+/// Get the scriptSig from an input.
+///
+/// For non-coinbase inputs, the scriptSig may provide data used during script
+/// execution. This library does not execute or validate scripts.
+pub fn get_input_script_sig(input: Input) -> ScriptBytes(InputScript) {
+  input.script_sig
+}
+
+/// An outpoint carried by a transaction input.
+///
+/// For ordinary inputs, this identifies the output being spent. For coinbase
+/// inputs, it contains the null-outpoint marker and references no output.
+pub opaque type OutPoint {
+  /// A special marker used by coinbase transactions.
+  NullOutPoint
+
+  /// A reference to a specific output of a previous transaction.
+  OutPoint(txid: Hash256, vout: Int)
+}
+
+/// Get the transaction ID from an outpoint.
+///
+/// The hash uses the same little-endian byte order found on the Bitcoin wire.
+/// For coinbase inputs, which do not reference a previous output, this returns
+/// an all-zero hash.
+pub fn get_outpoint_txid(outpoint: OutPoint) -> Hash256 {
+  case outpoint {
+    NullOutPoint -> {
+      let assert Ok(txid) = hash256.from_bytes_le(<<0:256>>)
+      txid
+    }
+    OutPoint(txid:, ..) -> txid
+  }
+}
+
+/// Get the output index from an outpoint.
+///
+/// Returns the zero-based index of the output within the referenced transaction.
+/// For coinbase inputs (which don't reference a previous output), returns `0xFFFFFFFF`,
+/// a special sentinel value indicating no previous output.
+pub fn get_outpoint_vout(outpoint: OutPoint) -> Int {
+  case outpoint {
+    NullOutPoint -> 0xFFFFFFFF
+    OutPoint(vout:, ..) -> vout
+  }
+}
+
+/// Check whether an outpoint is the null outpoint.
+///
+/// The null outpoint is the special previous output reference used as the
+/// coinbase input marker: an all-zero txid with vout `0xFFFFFFFF`.
+pub fn is_null_outpoint(outpoint: OutPoint) -> Bool {
+  case outpoint {
+    NullOutPoint -> True
+    OutPoint(..) -> False
+  }
+}
+
+/// A witness stack for a single transaction input.
+///
+/// Each input in a SegWit transaction has an associated stack of byte sequences
+/// supplied as witness data. Their interpretation depends on the spending
+/// conditions. This library exposes the items without executing or validating
+/// them.
+pub opaque type WitnessStack {
+  WitnessStack(
+    /// The number of witness items recorded in the stack.
+    item_count: Int,
+    /// The witness items in wire order.
+    items: List(WitnessItem),
+  )
+}
+
+/// Get the witness items from a witness stack.
+///
+/// Returns the witness items in order as they appear in the serialization.
+pub fn get_witness_items(stack: WitnessStack) -> List(WitnessItem) {
+  stack.items
+}
+
+/// Check whether a witness stack contains no items.
+///
+/// A stack containing a zero-length item is not empty. Emptiness refers to the
+/// number of items, not the number of bytes contained in those items.
+pub fn is_witness_stack_empty(stack: WitnessStack) -> Bool {
+  stack.item_count == 0
+}
+
+/// A single item from a witness stack.
+///
+/// A witness item is an arbitrary byte sequence that may represent a public
+/// key, signature, script, or other data. Its meaning is context-dependent;
+/// this library does not interpret it.
+pub opaque type WitnessItem {
+  WitnessItem(BitArray)
+}
+
+/// Get the raw bytes from a witness item.
+pub fn get_witness_item_bytes(item: WitnessItem) -> BitArray {
+  let WitnessItem(bytes) = item
+  bytes
+}
+
+/// A transaction output.
+///
+/// An output contains an encoded value and a raw scriptPubKey. Decoding alone
+/// does not establish that the value is within the consensus money range or
+/// that the script's spending conditions can be satisfied.
+pub opaque type Output {
+  Output(
+    /// The signed output value in satoshis decoded from the wire.
+    value: Int,
+    /// The raw scriptPubKey bytes for this output.
+    script_pubkey: ScriptBytes(OutputScript),
+  )
+}
+
+/// Get the decoded value from a transaction output.
+///
+/// For an output from a `Transaction(Parsed)`, this value may be negative or
+/// exceed Bitcoin's consensus money range. Use
+/// `validate_context_free_consensus` to check the transaction's output values.
+pub fn get_output_value(output: Output) -> Int {
+  output.value
+}
+
+/// Get the raw scriptPubKey from a transaction output.
+///
+/// A scriptPubKey encodes the conditions for spending an output. This library
+/// exposes the script bytes without executing or validating them.
+pub fn get_output_script_pubkey(output: Output) -> ScriptBytes(OutputScript) {
+  output.script_pubkey
+}
+
+/// Phantom type tag for `ScriptBytes` — marks bytes from an input's scriptSig.
+pub type InputScript
+
+/// Phantom type tag for `ScriptBytes` — marks a scriptPubKey (output locking script).
+pub type OutputScript
+
+/// Raw Bitcoin script bytes.
+///
+/// The `kind` type parameter is a phantom tag distinguishing input scripts
+/// (`ScriptBytes(InputScript)`) from output scripts (`ScriptBytes(OutputScript)`).
+///
+/// This type represents an uninterpreted script as it appears on the wire.
+/// No validation or opcode parsing is performed at this level.
+pub opaque type ScriptBytes(kind) {
+  ScriptBytes(BitArray)
+}
+
+/// Get the raw bytes from a `ScriptBytes`.
+pub fn get_raw_script_bytes(script: ScriptBytes(k)) -> BitArray {
+  let ScriptBytes(bytes) = script
+  bytes
+}
+
+/// Get the byte size of a `ScriptBytes`.
+///
+/// The size is measured from the raw script bytes and excludes the CompactSize
+/// length prefix used when the script is serialized in a transaction.
+pub fn get_script_size(script: ScriptBytes(k)) -> Int {
+  script
+  |> get_raw_script_bytes
+  |> bit_array.byte_size
+}
+
+// ==============================================================================
+// Output script classification
+// ==============================================================================
+
+/// The recognised structural script type of a transaction output's locking
+/// script.
+///
+/// Identifies which recognised Bitcoin script template a `script_pubkey` matches,
+/// enabling type-safe dispatch when inspecting outputs.
+///
+/// This type is intentionally classification-only. Its variants do not carry
+/// embedded script data such as hashes, public keys, witness programs, multisig
+/// parameters, or `OP_RETURN` payloads. Call `get_raw_script_bytes` when caller
+/// code needs to perform additional script-specific analysis.
+pub type OutputScriptType {
+  /// Pay-to-public-key template.
+  ///
+  /// Structurally matches a 33- or 65-byte key payload followed by
+  /// `OP_CHECKSIG`. The classifier does not validate the public key encoding.
+  P2PK
+
+  /// Pay-to-public-key-hash.
+  /// 
+  /// The most common legacy output type.
+  P2PKH
+
+  /// Pay-to-script-hash.
+  /// 
+  /// The hash of the redeem script is embedded in the `scriptPubKey`.
+  /// The actual spending conditions are revealed in the input's `scriptSig`.
+  P2SH
+
+  /// Pay-to-witness-public-key-hash.
+  /// 
+  /// SegWit v0 output for single-key spends.
+  P2WPKH
+
+  /// Pay-to-witness-script-hash.
+  /// 
+  /// SegWit v0 output for script-based spends.
+  P2WSH
+
+  /// Pay-to-taproot.
+  /// 
+  /// SegWit v1 output supporting key-path and script-path spends.
+  P2TR
+
+  /// Bitcoin Core's pay-to-anchor relay-policy template.
+  ///
+  /// Structurally matches exactly `OP_1 OP_DATA_2 4E 73`
+  /// (`51 02 4E 73`). Recognition is limited to Bitcoin Core's named relay
+  /// policy template; it does not introduce consensus validation.
+  P2A
+
+  /// Bare m-of-n multisig template using `OP_CHECKMULTISIG` directly in the
+  /// `scriptPubKey`.
+  ///
+  /// Structurally matches 1–20 key payloads and 1–20 required signatures with
+  /// minimally encoded counts. Key payloads may use direct, `OP_PUSHDATA1`,
+  /// `OP_PUSHDATA2`, or `OP_PUSHDATA4` pushes, provided their decoded sizes are
+  /// 33 or 65 bytes. The classifier checks only the payload shape; it does not
+  /// validate SEC prefixes or curve points. Relay-policy limits such as the
+  /// 1–3-key standardness rule are outside this classification.
+  BareMultisig
+
+  /// A structurally recognized null-data output.
+  ///
+  /// This variant represents the null-data script template, not every script
+  /// that begins with `OP_RETURN`.
+  ///
+  /// Matches scripts that begin with `OP_RETURN` and whose remaining bytes satisfy
+  /// Bitcoin Core-compatible push-only parsing. For historical compatibility,
+  /// this includes `OP_RESERVED`, even though executing that opcode fails. All
+  /// encoded push operations must be complete. Script size does not affect
+  /// classification.
+  ///
+  /// An `OP_RETURN` script with a non-push opcode or malformed push operation
+  /// after `OP_RETURN` classifies as `Unrecognized` instead.
+  NullData
+
+  /// A well-formed witness program that is not one of this library's named
+  /// output types.
+  ///
+  /// `version` is the decoded witness version (1–16). Version 1 with a 32-byte
+  /// witness program is `P2TR`, and the exact `51 02 4E 73` template is `P2A`,
+  /// so neither appears here. A later valid witness-program assignment remains
+  /// `OtherWitnessProgram` until a major release adds a dedicated constructor.
+  ///
+  /// Forward-compatible. Do not treat this the same as `Unrecognized`.
+  OtherWitnessProgram(version: Int)
+
+  /// Does not match any recognised structural output template.
+  ///
+  /// This is the unmatched structural fallback, not a relay-policy decision.
+  Unrecognized
+}
+
+/// Classify the script type of a transaction output's locking script.
+///
+/// Matches `script_pubkey` bytes against recognised Bitcoin script templates and
+/// returns the corresponding `OutputScriptType`.
+///
+/// Classification is per-script and structural. It does not determine whether
+/// the containing transaction satisfies a node's configurable relay policy.
+/// It also does not extract, decode, or interpret embedded hashes, public keys,
+/// witness programs, multisig parameters, signatures, or data payloads. For
+/// caller-specific script analysis, use `get_raw_script_bytes` on the original
+/// script.
+///
+/// ## Classification
+///
+/// ```
+/// ├─ 76 A9 14 [×20] 88 AC                  → P2PKH
+/// ├─ A9 14 [×20] 87                        → P2SH
+/// ├─ 00 14 [×20]                           → P2WPKH
+/// ├─ 00 20 [×32]                           → P2WSH
+/// ├─ 51 20 [×32]                           → P2TR
+/// ├─ 51 02 4E 73                           → P2A
+/// ├─ 21 [×33] AC                           → P2PK (33-byte payload)
+/// ├─ 41 [×65] AC                           → P2PK (65-byte payload)
+/// ├─ 6A …                                  (OP_RETURN prefix)
+/// │   ├─ complete push-only operations     → NullData
+/// │   └─ otherwise                         → Unrecognized
+/// └─ (none matched)
+///     ├─ [51–60] [02–28] [×push_length]    → OtherWitnessProgram(version)
+///     └─ structural m-of-n (1 ≤ m ≤ n ≤ 20, minimal counts)
+///         ├─ AND key-payload count = n     → BareMultisig
+///         └─ otherwise                     → Unrecognized
+/// ```
+///
+/// ## Example
+///
+/// ```gleam
+/// fn wallet_supports_output(output: Output) -> Bool {
+///   case classify_output_script(get_output_script_pubkey(output)) {
+///     P2WPKH | P2TR -> True
+///     _ -> False
+///   }
+/// }
+/// ```
+pub fn classify_output_script(
+  script: ScriptBytes(OutputScript),
+) -> OutputScriptType {
+  let script_bytes = get_raw_script_bytes(script)
+  case script_bytes {
+    // P2PKH: OP_DUP OP_HASH160 OP_DATA_20 <20-byte hash> OP_EQUALVERIFY OP_CHECKSIG
+    <<0x76, 0xA9, 0x14, _:bytes-size(20), 0x88, 0xAC>> -> P2PKH
+
+    // P2SH: OP_HASH160 OP_DATA_20 <20-byte hash> OP_EQUAL
+    <<0xA9, 0x14, _:bytes-size(20), 0x87>> -> P2SH
+
+    // P2WPKH: OP_0 OP_DATA_20 <20-byte witness program>
+    <<0x00, 0x14, _:bytes-size(20)>> -> P2WPKH
+
+    // P2WSH: OP_0 OP_DATA_32 <32-byte witness program>
+    <<0x00, 0x20, _:bytes-size(32)>> -> P2WSH
+
+    // P2TR: OP_1 OP_DATA_32 <32-byte witness program>
+    <<0x51, 0x20, _:bytes-size(32)>> -> P2TR
+
+    // P2A: OP_1 OP_DATA_2 "Ns" (Bitcoin Core's pay-to-anchor template)
+    <<0x51, 0x02, 0x4E, 0x73>> -> P2A
+
+    // P2PK: OP_DATA_33 <compressed pubkey> OP_CHECKSIG
+    <<0x21, _:bytes-size(33), 0xAC>> -> P2PK
+
+    // P2PK: OP_DATA_65 <uncompressed pubkey> OP_CHECKSIG
+    <<0x41, _:bytes-size(65), 0xAC>> -> P2PK
+
+    // NullData: OP_RETURN + complete, recognized push-only data.
+    <<0x6A, rest:bits>> ->
+      case do_is_push_only(rest) {
+        True -> NullData
+        False -> Unrecognized
+      }
+
+    _ -> do_classify_non_template(script_bytes)
+  }
+}
+
+/// Classify scripts that did not match any fixed-length template.
+/// Checks for future witness versions and bare multisig.
+fn do_classify_non_template(script_bytes: BitArray) -> OutputScriptType {
+  case script_bytes {
+    // OtherWitnessProgram: OP_1–OP_16 followed by a 2–40 byte witness program.
+    // OP_0 (P2WPKH/P2WSH) is already handled above.
+    // OP_1 with a 32-byte program or the exact P2A program is handled above.
+    <<version, push_length, _:bytes-size(push_length)>>
+      if version >= 0x51
+      && version <= 0x60
+      && push_length >= 2
+      && push_length <= 40
+    -> OtherWitnessProgram(version: decode_small_int_opcode(version))
+
+    _ ->
+      case do_is_bare_multisig(script_bytes) {
+        True -> BareMultisig
+        False -> Unrecognized
+      }
+  }
+}
+
+/// Return `True` if every opcode in `bytes` is a push opcode.
+/// Handles `OP_0`, `OP_1NEGATE`, `OP_RESERVED`, `OP_1`–`OP_16`, direct pushes
+/// (1–75 bytes), `OP_PUSHDATA1`, `OP_PUSHDATA2`, and `OP_PUSHDATA4`.
+fn do_is_push_only(bytes: BitArray) -> Bool {
+  case bytes {
+    <<>> -> True
+    // OP_0: pushes empty array
+    <<0x00, rest:bits>> -> do_is_push_only(rest)
+
+    // OP_1NEGATE: pushes -1
+    <<0x4F, rest:bits>> -> do_is_push_only(rest)
+
+    // OP_RESERVED: accepted for historical Bitcoin Core IsPushOnly compatibility
+    <<0x50, rest:bits>> -> do_is_push_only(rest)
+
+    // OP_1..OP_16: small integer pushes
+    <<opcode, rest:bits>> if opcode >= 0x51 && opcode <= 0x60 ->
+      do_is_push_only(rest)
+
+    // Direct push: 1–75 bytes follow immediately
+    <<push_length, rest:bits>> if push_length >= 0x01 && push_length <= 0x4B ->
+      case rest {
+        <<_:bytes-size(push_length), remainder:bits>> ->
+          do_is_push_only(remainder)
+
+        _ -> False
+      }
+
+    // OP_PUSHDATA1: next byte is length, then data
+    <<0x4C, push_length, rest:bits>> ->
+      case rest {
+        <<_:bytes-size(push_length), remainder:bits>> ->
+          do_is_push_only(remainder)
+
+        _ -> False
+      }
+
+    // OP_PUSHDATA2: next 2 bytes (LE) are length, then data
+    <<0x4D, push_length:little-size(16), rest:bits>> ->
+      case rest {
+        <<_:bytes-size(push_length), remainder:bits>> ->
+          do_is_push_only(remainder)
+
+        _ -> False
+      }
+
+    // OP_PUSHDATA4: next 4 bytes (LE) are length, then data
+    <<0x4E, push_length:little-size(32), rest:bits>> ->
+      case rest {
+        <<_:bytes-size(push_length), remainder:bits>> ->
+          do_is_push_only(remainder)
+
+        _ -> False
+      }
+
+    // Anything else is a non-push opcode
+    _ -> False
+  }
+}
+
+/// Return `True` if `bytes` is a structurally recognised bare multisig script:
+/// `m { key-push }... n OP_CHECKMULTISIG` where 1 ≤ m ≤ n ≤ 20.
+///
+/// Counts use the same minimal script-number grammar as Bitcoin Core's
+/// `MatchMultisig`: `OP_1`–`OP_16`, or a direct one-byte push for 17–20. Key
+/// payloads are consumed without extracting them and may use any complete
+/// direct or `OP_PUSHDATA*` push whose decoded size is 33 or 65 bytes.
+fn do_is_bare_multisig(bytes: BitArray) -> Bool {
+  case read_multisig_count(bytes) {
+    Error(_) -> False
+    Ok(#(min_sigs, after_min_sigs)) ->
+      case consume_multisig_key_pushes(after_min_sigs, 0) {
+        Error(_) -> False
+        Ok(#(key_count, after_keys)) ->
+          case read_multisig_count(after_keys) {
+            Error(_) -> False
+            Ok(#(pubkey_count, remainder)) ->
+              min_sigs <= pubkey_count
+              && pubkey_count <= 20
+              && key_count == pubkey_count
+              && remainder == <<0xAE>>
+          }
+      }
+  }
+}
+
+/// Read a minimally encoded multisig count and return the unconsumed bytes.
+///
+/// `OP_1`–`OP_16` are the minimal encodings for 1–16. Values 17–20 use a
+/// minimal direct one-byte script-number push (`01 11` through `01 14`).
+fn read_multisig_count(bytes: BitArray) -> Result(#(Int, BitArray), Nil) {
+  case bytes {
+    <<opcode, rest:bits>> if 0x51 <= opcode && opcode <= 0x60 ->
+      Ok(#(decode_small_int_opcode(opcode), rest))
+
+    <<0x01, value, rest:bits>> if 0x11 <= value && value <= 0x14 ->
+      Ok(#(value, rest))
+
+    _ -> Error(Nil)
+  }
+}
+
+/// Consume consecutive multisig key pushes without extracting their payloads.
+///
+/// The first non-key operation is left in `bytes` for the caller to parse as
+/// the n count. A recognised key push with a truncated payload is an error.
+fn consume_multisig_key_pushes(
+  bytes: BitArray,
+  count: Int,
+) -> Result(#(Int, BitArray), Nil) {
+  case bytes {
+    // Direct push of a 33-byte key payload.
+    <<0x21, rest:bits>> -> consume_multisig_key_payload(rest, count, 33)
+
+    // Direct push of a 65-byte key payload.
+    <<0x41, rest:bits>> -> consume_multisig_key_payload(rest, count, 65)
+
+    // OP_PUSHDATA1 with a 33- or 65-byte key payload.
+    <<0x4C, 33, rest:bits>> -> consume_multisig_key_payload(rest, count, 33)
+
+    <<0x4C, 65, rest:bits>> -> consume_multisig_key_payload(rest, count, 65)
+
+    // OP_PUSHDATA2 with a 33- or 65-byte key payload.
+    <<0x4D, 33:little-size(16), rest:bits>> ->
+      consume_multisig_key_payload(rest, count, 33)
+
+    <<0x4D, 65:little-size(16), rest:bits>> ->
+      consume_multisig_key_payload(rest, count, 65)
+
+    // OP_PUSHDATA4 with a 33- or 65-byte key payload.
+    <<0x4E, 33:little-size(32), rest:bits>> ->
+      consume_multisig_key_payload(rest, count, 33)
+
+    <<0x4E, 65:little-size(32), rest:bits>> ->
+      consume_multisig_key_payload(rest, count, 65)
+
+    // The first non-key operation is the n count. Leave it unconsumed.
+    _ -> Ok(#(count, bytes))
+  }
+}
+
+/// Consume the fixed-size payload of an already decoded key push.
+fn consume_multisig_key_payload(
+  bytes: BitArray,
+  count: Int,
+  length: Int,
+) -> Result(#(Int, BitArray), Nil) {
+  case count >= 20 {
+    True -> Error(Nil)
+    False ->
+      case bytes {
+        <<_:bytes-size(length), remainder:bits>> ->
+          consume_multisig_key_pushes(remainder, count + 1)
+
+        _ -> Error(Nil)
+      }
+  }
+}
+
+/// Decode a Bitcoin small-integer opcode (`OP_1`–`OP_16`) to its integer value (1–16).
+/// The caller is responsible for ensuring `opcode` is in the range `0x51`–`0x60`.
+fn decode_small_int_opcode(opcode: Int) -> Int {
+  opcode - 0x50
+}
+
+// ==============================================================================
+// Error handling
+// ==============================================================================
+
+/// An error that occurred while deserializing a Bitcoin transaction from hex.
+///
+/// Distinguishes failures during hex-to-bytes conversion from failures during
+/// transaction decoding.
+pub type DeserializeHexError {
+  /// The hexadecimal string could not be converted to bytes.
+  ///
+  /// This occurs before any transaction decoding begins, typically due to an
+  /// odd-length hex string or the presence of invalid hexadecimal characters.
+  InvalidHex
+
+  /// The byte sequence could not be decoded as a Bitcoin transaction.
+  ///
+  /// This wraps a `DecodeError` containing details about what went wrong during
+  /// the transaction decoding phase.
+  DecodeFailed(DecodeError)
+}
+
+/// An error that occurred while decoding a Bitcoin transaction from bytes.
+///
+/// Carries the byte offset where the error occurred, the kind of error, and
+/// internal parser-location details used to build the public structural path.
+pub opaque type DecodeError {
+  DecodeError(offset: Int, kind: DecodeErrorKind, context: List(ParseContext))
+}
+
+/// The specific kind of error that occurred during transaction decoding.
+///
+/// Categorizes decode failures into distinct variants.
+pub type DecodeErrorKind {
+  /// The input does not contain a whole number of bytes.
+  ///
+  /// Bitcoin wire-format inputs are byte-aligned. The wrapped value is the
+  /// exact total number of bits in the supplied input.
+  NonByteAlignedInput(bit_count: Int)
+
+  /// The input ended before enough bytes could be read.
+  UnexpectedEof(
+    /// The number of bytes the decoder required.
+    bytes_needed: Int,
+    /// The number of bytes available at that point.
+    remaining: Int,
+  )
+
+  /// A CompactSize-encoded integer used a non-minimal encoding.
+  ///
+  /// Bitcoin's serialization rules require CompactSize integers to use the
+  /// shortest possible encoding. This error occurs when a value could have
+  /// been encoded in fewer bytes than were used.
+  NonMinimalCompactSize(
+    /// The size of the encoded CompactSize in bytes.
+    encoded_size: Int,
+    /// The decoded integer value.
+    value: Int,
+  )
+
+  /// The SegWit marker byte (0x00) was present but the flag byte was not 0x01.
+  InvalidSegwitMarkerFlag(
+    /// The marker byte.
+    marker: Int,
+    /// The invalid flag byte.
+    flag: Int,
+  )
+
+  /// SegWit serialization was used, but every input witness stack was empty.
+  ///
+  /// Transactions without witness data must use legacy serialization. A witness
+  /// stack containing a zero-length item is nonempty and does not trigger this
+  /// error.
+  SuperfluousWitnessRecord
+
+  /// A length or count requires more bytes than remain in the input.
+  ///
+  /// Unlike `UnexpectedEof`, which reports a failed read, this error reports a
+  /// decoded length or count that is known in advance not to fit in the remaining
+  /// input. This is distinct from `PolicyLimitExceeded`, which enforces configured
+  /// resource limits.
+  ///
+  /// Examples:
+  /// - A scriptSig length claims a 100-byte script, but only 99 bytes remain.
+  /// - An input count claims one input, whose smallest encoding is 41 bytes, but
+  ///   only 40 bytes remain.
+  InsufficientBytes(
+    /// The number of bytes required.
+    ///
+    /// This may be a conservative estimate, such as `remaining + 1`, rather
+    /// than the exact requirement to avoid integer overflow on JavaScript.
+    claimed: Int,
+    /// The number of bytes available.
+    remaining: Int,
+  )
+
+  /// A decoded 64-bit integer value exceeds the range representable by the runtime.
+  ///
+  /// The original value is preserved as a string for diagnostics.
+  IntegerOutOfRange(String)
+
+  /// A policy limit was exceeded.
+  PolicyLimitExceeded(
+    /// The `DecodePolicy` limit that was violated.
+    limit: DecodePolicyLimit,
+    /// The measured or decoded quantity that exceeded `max`.
+    value: Int,
+    /// The configured maximum.
+    max: Int,
+  )
+
+  /// One transaction was successfully decoded, but extra bytes remain, so
+  /// deserialization failed.
+  ///
+  /// This indicates the input buffer contains more data than a single valid transaction.
+  /// The wrapped `Int` is the count of trailing bytes that were not consumed.
+  TrailingBytes(Int)
+}
+
+/// Identifies the configured `DecodePolicy` limit that was exceeded.
+///
+/// Carried by `PolicyLimitExceeded`. Use `get_decode_error_path` to identify
+/// where the violation occurred.
+pub type DecodePolicyLimit {
+  /// The maximum input buffer size was exceeded.
+  ///
+  /// In `PolicyLimitExceeded`, `value` is the total byte size of the supplied
+  /// buffer. This limit is checked before decoding begins.
+  MaxTransactionSize
+
+  /// The maximum number of transaction inputs was exceeded.
+  MaxInputCount
+
+  /// The maximum number of transaction outputs was exceeded.
+  MaxOutputCount
+
+  /// The maximum raw byte size of a scriptSig or scriptPubKey was exceeded.
+  ///
+  /// The size excludes the script's CompactSize length prefix.
+  MaxScriptSize
+
+  /// The maximum witness stack item count for a single input was exceeded.
+  MaxWitnessStackItemCount
+
+  /// The maximum witness stack payload size for a single input was exceeded.
+  ///
+  /// In `PolicyLimitExceeded`, `value` is the cumulative payload size across
+  /// all items decoded so far for the stack, not the size of the individual item
+  /// that pushed it over the limit. The payload size excludes each item's
+  /// CompactSize length prefix.
+  MaxWitnessStackPayloadSize
+}
+
+/// Internal breadcrumbs used to build public decode error paths.
+///
+/// Contexts are accumulated from outermost to innermost and projected by
+/// `get_decode_error_path`.
+type ParseContext {
+  InTransaction
+  AtInput(Int)
+  AtOutput(Int)
+  AtWitnessStack(Int)
+  AtWitnessItem(Int)
+  AtField(ParseField)
+}
+
+/// Internal transaction wire-format fields used in decode error paths.
+type ParseField {
+  // Top-level transaction fields
+  Version
+  LockTime
+  // SegWit marker/flag detection
+  SegwitMarkerAndFlag
+  // Input-related fields
+  InputCount
+  OutPointTxid
+  OutPointVout
+  ScriptSigLength
+  Sequence
+  // Output-related fields
+  OutputCount
+  Value
+  ScriptPubKeyLength
+  // Witness-related fields
+  WitnessItemCount
+  WitnessItemLength
+}
+
+/// Get the byte offset where a decoding error occurred.
+///
+/// The offset is a zero-based position into the input buffer, indicating
+/// where the decoder was reading when it encountered the error. This is useful
+/// for debugging and error reporting.
+pub fn get_decode_error_offset(err: DecodeError) -> Int {
+  err.offset
+}
+
+/// Get the specific kind of decoding error that occurred.
+///
+/// Returns the `DecodeErrorKind` variant that categorizes what went wrong,
+/// such as `UnexpectedEof`, `NonMinimalCompactSize`, `PolicyLimitExceeded`, etc.
+/// This allows you to handle different error types differently.
+///
+/// ## Example
+///
+/// ```gleam
+/// fn is_truncated(error: DecodeError) -> Bool {
+///   case get_decode_error_kind(error) {
+///     UnexpectedEof(_, _) -> True
+///     InsufficientBytes(_, _) -> True
+///     _ -> False
+///   }
+/// }
+/// ```
+pub fn get_decode_error_kind(err: DecodeError) -> DecodeErrorKind {
+  err.kind
+}
+
+/// Get the structural path for a decoding error.
+///
+/// The path is derived from internal parser-location details and uses a stable,
+/// machine-friendly format rooted at `transaction`. Collection indices are
+/// zero-based and written in brackets.
+///
+/// For example, an error at the scriptSig length prefix of the third input
+/// produces `transaction.inputs[2].script_sig.length`.
+///
+/// The path identifies where the error occurred but does not include the byte
+/// offset or error kind. Use `get_decode_error_offset` and
+/// `get_decode_error_kind` for those details.
+pub fn get_decode_error_path(err: DecodeError) -> String {
+  list.fold(err.context, "", fn(path, ctx) {
+    case ctx {
+      InTransaction -> "transaction"
+      AtInput(index) -> path <> ".inputs[" <> int.to_string(index) <> "]"
+      AtOutput(index) -> path <> ".outputs[" <> int.to_string(index) <> "]"
+      AtWitnessStack(index) ->
+        path <> ".witnesses[" <> int.to_string(index) <> "]"
+      AtWitnessItem(index) -> path <> ".items[" <> int.to_string(index) <> "]"
+      AtField(field) -> path <> field_path_suffix(field)
+    }
+  })
+}
+
+fn field_path_suffix(field: ParseField) -> String {
+  case field {
+    Version -> ".version"
+    LockTime -> ".lock_time"
+    SegwitMarkerAndFlag -> ".segwit.marker_and_flag"
+    InputCount -> ".inputs.count"
+    OutPointTxid -> ".outpoint.txid"
+    OutPointVout -> ".outpoint.vout"
+    ScriptSigLength -> ".script_sig.length"
+    Sequence -> ".sequence"
+    OutputCount -> ".outputs.count"
+    Value -> ".value"
+    ScriptPubKeyLength -> ".script_pubkey.length"
+    WitnessItemCount -> ".items.count"
+    WitnessItemLength -> ".length"
+  }
+}
+
+fn new_decode_error(kind: DecodeErrorKind, offset: Int) -> DecodeError {
+  DecodeError(offset:, kind:, context: [])
+}
+
+fn with_context(err: DecodeError, context: List(ParseContext)) -> DecodeError {
+  list.fold(context, err, fn(err, ctx) {
+    DecodeError(..err, context: [ctx, ..err.context])
+  })
+}
+
+/// Build a DecodeError factory function for a specific field at a given offset.
+///
+/// Returns a function that takes a DecodeErrorKind and produces a DecodeError
+/// with the field context already applied. The offset parameter allows you to
+/// point the error to a specific byte location, such as the start of a field,
+/// rather than the current reader position.
+fn field_error(
+  field: ParseField,
+  offset: Int,
+  context: List(ParseContext),
+) -> fn(DecodeErrorKind) -> DecodeError {
+  fn(kind) {
+    kind
+    |> new_decode_error(offset)
+    |> with_context([AtField(field), ..context])
+  }
+}
+
+// ==============================================================================
+// Deserialization and Prefix Decoding
+// ==============================================================================
+
+/// Configuration policy for transaction decoding limits.
+///
+/// This type controls resource constraints during transaction decoding to protect
+/// against malicious inputs that could cause excessive memory allocation or
+/// processing time.
+/// 
+/// Limits are enforced during decoding. If a limit is exceeded,
+/// decoding fails with `PolicyLimitExceeded`.
+///
+/// The limits complement one another: transaction size bounds the complete
+/// input buffer, while count and per-field limits can impose tighter bounds as
+/// the transaction is decoded. See the corresponding
+/// `decode_policy_with_*` functions for enforcement details.
+///
+/// Optional limits are only enforced when `Some`; `None` disables the limit.
+///
+/// Builder functions do not validate whether custom limits are useful for
+/// decoding consensus-valid transactions. Callers that override `default_decode_policy`
+/// are responsible for choosing sensible values for their use case. Overly
+/// strict or unusual values may simply cause decoding to fail with existing
+/// decode errors.
+///
+/// ## See Also
+///
+/// - `default_decode_policy` for the standard decoding limits
+/// - `deserialize_with_policy` to apply a custom policy
+pub opaque type DecodePolicy {
+  DecodePolicy(
+    /// Maximum byte size accepted by the decoder, checked before decoding.
+    max_tx_size: Int,
+    /// Maximum decoded input count.
+    max_input_count: Int,
+    /// Maximum decoded output count.
+    max_output_count: Int,
+    /// Maximum raw byte size of each scriptSig or scriptPubKey, excluding its
+    /// CompactSize length prefix.
+    max_script_size: Int,
+    /// Maximum item count per witness stack, or `None` for no limit.
+    max_witness_stack_item_count: Option(Int),
+    /// Maximum payload size per witness stack, excluding length prefixes, or
+    /// `None` for no limit.
+    max_witness_stack_payload_size: Option(Int),
+  )
+}
+
+/// The default transaction decoding policy.
+///
+/// Provides reasonable resource limits for transaction decoding, applied
+/// automatically when using `deserialize` or `deserialize_hex`. These defaults
+/// protect against malicious inputs while preventing excessive memory allocation
+/// and processing time. As these are policy limits rather than consensus rules,
+/// some valid Bitcoin transactions may be rejected by this configuration.
+/// 
+/// By default, whole-value decoding accepts serialized transactions up to
+/// 400,000 bytes, input and output counts up to 100,000 each, and each
+/// `scriptSig` or `scriptPubKey` up to 10,000 bytes. It imposes no per-input
+/// limit on witness stack item count or payload size.
+pub fn default_decode_policy() -> DecodePolicy {
+  DecodePolicy(
+    max_tx_size: 400_000,
+    max_input_count: 100_000,
+    max_output_count: 100_000,
+    max_script_size: 10_000,
+    max_witness_stack_item_count: None,
+    max_witness_stack_payload_size: None,
+  )
+}
+
+/// Return a policy with a custom maximum serialized transaction size.
+///
+/// For byte-aligned input, this limit is checked before whole-value decoding
+/// begins and provides its primary byte envelope. It is not applied when a
+/// transaction is decoded as a prefix inside a block; the enclosing block
+/// policy owns that byte envelope.
+pub fn decode_policy_with_max_tx_size(
+  policy: DecodePolicy,
+  max_tx_size: Int,
+) -> DecodePolicy {
+  DecodePolicy(..policy, max_tx_size:)
+}
+
+/// Return a policy with a custom maximum transaction input count.
+///
+/// After the decoded count has been checked against the bytes remaining in the
+/// input, this limit is enforced before any input is decoded. It can bound input
+/// parsing and list allocation more tightly than the transaction-size limit
+/// alone.
+pub fn decode_policy_with_max_input_count(
+  policy: DecodePolicy,
+  max_input_count: Int,
+) -> DecodePolicy {
+  DecodePolicy(..policy, max_input_count:)
+}
+
+/// Return a policy with a custom maximum transaction output count.
+///
+/// After the decoded count has been checked against the bytes remaining in the
+/// input, this limit is enforced before any output is decoded. It can bound
+/// output parsing and list allocation more tightly than the transaction-size
+/// limit alone.
+pub fn decode_policy_with_max_output_count(
+  policy: DecodePolicy,
+  max_output_count: Int,
+) -> DecodePolicy {
+  DecodePolicy(..policy, max_output_count:)
+}
+
+/// Return a policy with a custom maximum script size.
+///
+/// This limit applies separately to each `scriptSig` and `scriptPubKey` and
+/// measures raw script bytes, excluding the CompactSize length prefix. After a
+/// decoded script length has been checked against the bytes remaining in the
+/// input, this limit is enforced before the script bytes are read.
+pub fn decode_policy_with_max_script_size(
+  policy: DecodePolicy,
+  max_script_size: Int,
+) -> DecodePolicy {
+  DecodePolicy(..policy, max_script_size:)
+}
+
+/// Return a policy with a custom item count limit per witness stack.
+///
+/// This is a per-input limit. When set to `Some`, it is checked after the
+/// witness item count is decoded and before any item in that stack is decoded.
+/// Zero-length items count toward the limit. Set to `None` to disable it.
+pub fn decode_policy_with_max_witness_stack_item_count(
+  policy: DecodePolicy,
+  max_witness_stack_item_count: Option(Int),
+) -> DecodePolicy {
+  DecodePolicy(..policy, max_witness_stack_item_count:)
+}
+
+/// Return a policy with a custom payload size limit per witness stack.
+///
+/// This is a per-input limit on the cumulative raw bytes across all witness
+/// items, excluding their CompactSize length prefixes. When set to `Some`,
+/// decoding fails as soon as the cumulative decoded payload exceeds the limit.
+/// Set to `None` to disable it.
+pub fn decode_policy_with_max_witness_stack_payload_size(
+  policy: DecodePolicy,
+  max_witness_stack_payload_size: Option(Int),
+) -> DecodePolicy {
+  DecodePolicy(..policy, max_witness_stack_payload_size:)
+}
+
+/// Get the maximum serialized transaction size.
+pub fn decode_policy_max_tx_size(policy: DecodePolicy) -> Int {
+  policy.max_tx_size
+}
+
+/// Get the maximum transaction input count.
+pub fn decode_policy_max_input_count(policy: DecodePolicy) -> Int {
+  policy.max_input_count
+}
+
+/// Get the maximum transaction output count.
+pub fn decode_policy_max_output_count(policy: DecodePolicy) -> Int {
+  policy.max_output_count
+}
+
+/// Get the maximum script size.
+pub fn decode_policy_max_script_size(policy: DecodePolicy) -> Int {
+  policy.max_script_size
+}
+
+/// Get the maximum item count per witness stack.
+pub fn decode_policy_max_witness_stack_item_count(
+  policy: DecodePolicy,
+) -> Option(Int) {
+  policy.max_witness_stack_item_count
+}
+
+/// Get the maximum payload size per witness stack.
+pub fn decode_policy_max_witness_stack_payload_size(
+  policy: DecodePolicy,
+) -> Option(Int) {
+  policy.max_witness_stack_payload_size
+}
+
+/// Deserialize a Bitcoin transaction from its canonical Bitcoin wire-format
+/// serialization.
+///
+/// This is the standard entry point for converting a complete serialized
+/// Bitcoin transaction into a typed value. The entire input must contain
+/// exactly one transaction; trailing bytes are rejected.
+///
+/// This function applies `default_decode_policy` to protect against malicious inputs
+/// by enforcing reasonable limits on transaction size, input/output counts, script
+/// sizes, and witness data.
+/// 
+/// For custom resource limits, use `deserialize_with_policy` instead.
+///
+/// The returned transaction is marked as `Parsed`, meaning its structure was
+/// successfully parsed but it has not yet been checked against Bitcoin
+/// consensus rules.
+///
+/// ## Returns
+///
+/// - `Ok(Transaction(Parsed))`: Successfully deserialized within the default policy limits.
+/// - `Error(DecodeError)`: The bytes were not a well-formed transaction
+///   encoding within the default policy limits.
+pub fn deserialize(
+  bytes: BitArray,
+) -> Result(Transaction(Parsed), DecodeError) {
+  deserialize_with_policy(bytes, default_decode_policy())
+}
+
+/// Deserialize a Bitcoin transaction with custom resource limits.
+///
+/// Like `deserialize`, but accepts a `DecodePolicy` to override the resource
+/// limits applied during decoding. Use `default_decode_policy` and the
+/// `decode_policy_with_*` builder functions to construct custom policies.
+/// Byte alignment is validated before resource limits. For byte-aligned inputs,
+/// limits that are exceeded produce a `PolicyLimitExceeded` error. See
+/// `DecodePolicy` and `default_decode_policy` for available options and defaults.
+///
+/// ## Returns
+///
+/// - `Ok(Transaction(Parsed))`: Successfully deserialized within the supplied policy limits.
+/// - `Error(DecodeError)`: The bytes were not a well-formed transaction
+///   encoding within the supplied policy limits.
+pub fn deserialize_with_policy(
+  bytes: BitArray,
+  policy: DecodePolicy,
+) -> Result(Transaction(Parsed), DecodeError) {
+  let error_at_zero_offset = fn(err) {
+    err
+    |> new_decode_error(0)
+    |> with_context([InTransaction])
+  }
+
+  use reader <- result.try(
+    bytes
+    |> reader.new
+    |> result.map_error(fn(err) {
+      case err {
+        reader.NonByteAlignedInput(bit_count) ->
+          error_at_zero_offset(NonByteAlignedInput(bit_count))
+      }
+    }),
+  )
+
+  let tx_size = bit_array.byte_size(bytes)
+  use <- bool.guard(
+    tx_size > policy.max_tx_size,
+    Error(
+      error_at_zero_offset(PolicyLimitExceeded(
+        MaxTransactionSize,
+        tx_size,
+        policy.max_tx_size,
+      )),
+    ),
+  )
+
+  reader
+  |> parser.run(tx_parser(policy), _, [InTransaction])
+  |> result.map(pair.second)
+}
+
+/// Returns the decoded `Transaction` and the number of bytes consumed.
+///
+/// This is intended for internal use by block decoding. It does not require the
+/// input to end after the transaction and does not apply the policy's top-level
+/// `max_tx_size` check; callers that decode an enclosing structure are expected
+/// to enforce their own envelope limits. Callers must supply byte-aligned input;
+/// public whole-value deserializers enforce this before decoding begins.
+@internal
+pub fn decode_prefix_with_policy(
+  bytes: BitArray,
+  policy: DecodePolicy,
+) -> Result(#(Transaction(Parsed), Int), DecodeError) {
+  let assert Ok(reader) = reader.new(bytes)
+
+  policy
+  |> tx_body_parser
+  |> parser.try_with_reader(fn(tx, reader, _ctx) {
+    Ok(#(tx, reader.get_offset(reader)))
+  })
+  |> parser.run(reader, [InTransaction])
+  |> result.map(pair.second)
+}
+
+/// Deserialize a Bitcoin transaction from its hexadecimal string representation.
+///
+/// This is a convenience function that combines hex-to-bytes conversion with
+/// transaction deserialization. It's useful when working with transaction data in
+/// hexadecimal format, such as from block explorers, RPC responses, or test
+/// vectors.
+///
+/// This function applies `default_decode_policy` for resource limits.
+/// For custom resource limits, use `deserialize_hex_with_policy` instead.
+///
+/// ## Returns
+///
+/// - `Ok(Transaction(Parsed))`: Successfully deserialized within the default policy limits.
+/// - `Error(InvalidHex)`: The hex string was invalid (odd length or
+///   invalid characters).
+/// - `Error(DecodeFailed(error))`: The decoded bytes were not a well-formed
+///   transaction encoding within the default policy limits.
+pub fn deserialize_hex(
+  hex: String,
+) -> Result(Transaction(Parsed), DeserializeHexError) {
+  deserialize_hex_with_policy(hex, default_decode_policy())
+}
+
+/// Deserialize a Bitcoin transaction from hexadecimal with custom resource limits.
+///
+/// This function combines hex-to-bytes conversion with policy-based transaction
+/// deserialization, providing both the convenience of hexadecimal input and
+/// fine-grained control over resource limits. Use this when working with
+/// hex-encoded transaction data that requires custom resource constraints.
+///
+/// ## Returns
+///
+/// - `Ok(Transaction(Parsed))`: Successfully deserialized within the supplied policy limits.
+/// - `Error(InvalidHex)`: The hex string was invalid (odd length or
+///   invalid characters).
+/// - `Error(DecodeFailed(error))`: The decoded bytes were not a well-formed
+///   transaction encoding within the supplied policy limits.
+pub fn deserialize_hex_with_policy(
+  hex: String,
+  policy: DecodePolicy,
+) -> Result(Transaction(Parsed), DeserializeHexError) {
+  use bytes <- result.try(
+    hex
+    |> bit_array.base16_decode
+    |> result.replace_error(InvalidHex),
+  )
+
+  bytes
+  |> deserialize_with_policy(policy)
+  |> result.map_error(DecodeFailed)
+}
+
+// ==============================================================================
+// Transaction Parser
+// ==============================================================================
+
+fn tx_parser(
+  policy: DecodePolicy,
+) -> Parser(ParseContext, Transaction(Parsed), DecodeError) {
+  use tx <- parser.then(tx_body_parser(policy))
+  use Nil <- parser.then(end_of_tx_parser())
+  parser.return(tx)
+}
+
+fn tx_body_parser(
+  policy: DecodePolicy,
+) -> Parser(ParseContext, Transaction(Parsed), DecodeError) {
+  use version <- parser.then(field_parser(Version, reader.read_u32_le))
+  use is_segwit <- parser.then(segwit_detection_parser())
+  use input_count <- parser.then(input_count_parser(policy.max_input_count))
+  use inputs <- parser.then(inputs_parser(input_count, policy.max_script_size))
+  use output_count <- parser.then(output_count_parser(policy.max_output_count))
+  use outputs <- parser.then(outputs_parser(
+    output_count,
+    policy.max_script_size,
+  ))
+  use witnesses <- parser.then(witnesses_if_segwit_parser(
+    is_segwit,
+    input_count,
+    policy,
+  ))
+  use lock_time <- parser.then(field_parser(LockTime, reader.read_u32_le))
+
+  parser.return(case witnesses {
+    Some(witnesses) ->
+      Segwit(
+        version:,
+        input_count:,
+        inputs:,
+        output_count:,
+        outputs:,
+        lock_time:,
+        witnesses:,
+      )
+
+    None ->
+      Legacy(
+        version:,
+        input_count:,
+        inputs:,
+        output_count:,
+        outputs:,
+        lock_time:,
+      )
+  })
+}
+
+fn end_of_tx_parser() -> Parser(ParseContext, Nil, DecodeError) {
+  parser.end_of_input(fn(bytes_remaining, reader, ctx) {
+    bytes_remaining
+    |> TrailingBytes
+    |> new_decode_error(reader.get_offset(reader))
+    |> with_context(ctx)
+  })
+}
+
+// ==============================================================================
+// Shared Parser Helpers
+// ==============================================================================
+
+/// Construct a parser for a field, adding error mapping and context wrapping.
+fn field_parser(
+  field: ParseField,
+  read_fn: fn(Reader) -> Result(#(Reader, a), reader.OperationError),
+) -> Parser(ParseContext, a, DecodeError) {
+  parser.from_reader(read_fn, fn(err, start_offset, ctx) {
+    err
+    |> decode.map_reader_error(UnexpectedEof)
+    |> field_error(field, start_offset, ctx)
+  })
+}
+
+/// Construct a CompactSize parser with error mapping and context wrapping.
+fn compact_size_parser(
+  field: ParseField,
+) -> Parser(ParseContext, Uint64, DecodeError) {
+  parser.from_reader(compact_size.read, fn(err, start_offset, ctx) {
+    err
+    |> decode.map_compact_size_error(UnexpectedEof, NonMinimalCompactSize)
+    |> field_error(field, start_offset, ctx)
+  })
+}
+
+/// Construct a parser for a CompactSize value converted to `Int`.
+///
+/// This wraps `compact_size_parser` and handles the common pattern of converting
+/// the `Uint64` result to `Int`, mapping conversion failures to `IntegerOutOfRange` errors.
+fn compact_size_int_parser(
+  field: ParseField,
+) -> Parser(ParseContext, Int, DecodeError) {
+  field
+  |> compact_size_parser
+  |> parser.try_with_start_offset(fn(value_u64, start_offset, _, ctx) {
+    value_u64
+    |> decode.uint64_to_int(IntegerOutOfRange)
+    |> result.map_error(field_error(field, start_offset, ctx))
+  })
+}
+
+// ==============================================================================
+// SegWit Detection
+// ==============================================================================
+
+/// Construct a parser that detects whether a transaction uses SegWit format.
+///
+/// Returns `True` if the marker/flag bytes (0x00, 0x01) are present, `False` otherwise.
+/// When run, the parser consumes the marker/flag bytes if present.
+fn segwit_detection_parser() -> Parser(ParseContext, Bool, DecodeError) {
+  segwit_lookahead_parser()
+  |> parser.then(fn(is_segwit) {
+    case is_segwit {
+      True ->
+        is_segwit
+        |> parser.return
+        |> parser.keep_left(segwit_marker_and_flag_parser())
+
+      False -> parser.return(is_segwit)
+    }
+  })
+}
+
+/// Construct a parser that inspects the next two bytes for a SegWit marker/flag.
+///
+/// This parser never consumes input, regardless of whether it succeeds or
+/// returns an error.
+///
+/// `segwit_detection_parser` consumes the marker and flag bytes after this
+/// parser recognizes 0x00 0x01.
+fn segwit_lookahead_parser() -> Parser(ParseContext, Bool, DecodeError) {
+  // Constructs a parser directly due to special peek semantics and EOF error recovery.
+  fn(reader, ctx) {
+    case reader.peek_bytes(reader, 2) {
+      Ok(bytes) -> {
+        let assert <<marker, flag>> = bytes
+        case marker, flag {
+          0x00, 0x01 -> Ok(#(reader, True))
+
+          0x00, 0x00 -> Ok(#(reader, False))
+
+          0x00, _ ->
+            InvalidSegwitMarkerFlag(marker, flag)
+            |> field_error(SegwitMarkerAndFlag, reader.get_offset(reader), ctx)
+            |> Error
+
+          _, _ -> Ok(#(reader, False))
+        }
+      }
+
+      Error(err) -> {
+        // Panic on InvalidReadCount and silently treat UnexpectedEof as non-SegWit.
+        let _ = decode.map_reader_error(err, UnexpectedEof)
+        // We can't peek, so we fall through and let the subsequent field parsers
+        // produce a more contextual EOF error.
+        Ok(#(reader, False))
+      }
+    }
+  }
+}
+
+/// Construct a parser that consumes the SegWit marker and flag bytes when run.
+fn segwit_marker_and_flag_parser() -> Parser(ParseContext, Nil, DecodeError) {
+  field_parser(SegwitMarkerAndFlag, fn(reader) {
+    reader
+    |> reader.skip_bytes(2)
+    |> result.map(pair.new(_, Nil))
+  })
+}
+
+// ==============================================================================
+// Input Parsing
+// ==============================================================================
+
+fn inputs_parser(
+  input_count: Int,
+  max_script_size_policy: Int,
+) -> Parser(ParseContext, List(Input), DecodeError) {
+  // input_count
+  // ├─ Input #0
+  // │    ├─ outpoint txid (32 bytes)
+  // │    ├─ vout (4 bytes)
+  // │    ├─ scriptSig length (CompactSize)
+  // │    ├─ scriptSig bytes
+  // │    └─ sequence (4 bytes)
+  // ├─ Input #1
+  // │    ├─ ...
+  // └─ Input #(input_count - 1)
+  parser.indexed_repeat(
+    input_count,
+    input_parser(max_script_size_policy),
+    AtInput,
+  )
+}
+
+/// Validate and convert the input count from Uint64 to Int,
+/// checking structural and policy limits.
+fn input_count_parser(
+  max_input_count_policy: Int,
+) -> Parser(ParseContext, Int, DecodeError) {
+  InputCount
+  |> compact_size_int_parser
+  |> parser.try_with_start_offset(fn(input_count, start_offset, reader, ctx) {
+    validate_input_count(input_count, reader, max_input_count_policy, fn(kind) {
+      kind
+      |> field_error(InputCount, start_offset, ctx)
+      |> Error
+    })
+  })
+}
+
+fn input_parser(
+  max_script_size_policy: Int,
+) -> Parser(ParseContext, Input, DecodeError) {
+  // │ outpoint txid (32 bytes)
+  // │ vout (4 bytes)
+  // │ scriptSig length (CompactSize)
+  // │ scriptSig bytes
+  // │ sequence (4 bytes)
+  parser.map3(
+    outpoint_parser(),
+    script_sig_parser(max_script_size_policy),
+    field_parser(Sequence, reader.read_u32_le),
+    Input,
+  )
+}
+
+fn outpoint_parser() -> Parser(ParseContext, OutPoint, DecodeError) {
+  parser.map2(
+    field_parser(OutPointTxid, reader.read_bytes(_, 32)),
+    field_parser(OutPointVout, reader.read_u32_le),
+    fn(outpoint_txid_bytes, vout) {
+      case outpoint_txid_bytes, vout {
+        <<0:256>>, 0xFFFFFFFF -> NullOutPoint
+
+        _, _ -> {
+          // Safe: read_bytes(_, 32) guarantees exactly 32 bytes on success
+          let assert Ok(hash256) = hash256.from_bytes_le(outpoint_txid_bytes)
+          OutPoint(hash256, vout)
+        }
+      }
+    },
+  )
+}
+
+fn validate_input_count(
+  input_count: Int,
+  reader: Reader,
+  max_input_count_policy: Int,
+  on_invalid: fn(DecodeErrorKind) -> Result(Int, DecodeError),
+) -> Result(Int, DecodeError) {
+  let min_input_size = 41
+  let remaining = reader.bytes_remaining(reader)
+  // Upper bound implied by remaining bytes (each input is at least 41 bytes)
+  let max_inputs_by_bytes = remaining / min_input_size
+
+  use <- bool.guard(
+    input_count > max_inputs_by_bytes,
+    on_invalid(InsufficientBytes(claimed: remaining + 1, remaining:)),
+  )
+
+  use <- bool.guard(
+    input_count > max_input_count_policy,
+    on_invalid(PolicyLimitExceeded(
+      MaxInputCount,
+      input_count,
+      max_input_count_policy,
+    )),
+  )
+
+  Ok(input_count)
+}
+
+// ==============================================================================
+// Output Parsing
+// ==============================================================================
+
+fn outputs_parser(
+  output_count: Int,
+  max_script_size_policy: Int,
+) -> Parser(ParseContext, List(Output), DecodeError) {
+  // output_count
+  // ├─ Output #0
+  // │    ├─ value (8 bytes)
+  // │    ├─ scriptPubKey length (CompactSize)
+  // │    └─ scriptPubKey bytes
+  // ├─ Output #1
+  // │    ├─ ...
+  // └─ Output #(output_count - 1)
+  parser.indexed_repeat(
+    output_count,
+    output_parser(max_script_size_policy),
+    AtOutput,
+  )
+}
+
+/// Validate and convert the output count from Uint64 to Int, checking structural and policy limits.
+fn output_count_parser(
+  max_output_count_policy: Int,
+) -> Parser(ParseContext, Int, DecodeError) {
+  OutputCount
+  |> compact_size_int_parser
+  |> parser.try_with_start_offset(fn(output_count, start_offset, reader, ctx) {
+    validate_output_count(
+      output_count,
+      reader,
+      max_output_count_policy,
+      fn(kind) {
+        kind
+        |> field_error(OutputCount, start_offset, ctx)
+        |> Error
+      },
+    )
+  })
+}
+
+fn output_parser(
+  max_script_size_policy: Int,
+) -> Parser(ParseContext, Output, DecodeError) {
+  // | value (8 bytes)
+  // | scriptPubKey length (CompactSize)
+  // | scriptPubKey bytes
+  parser.map2(
+    satoshis_parser(),
+    script_pubkey_parser(max_script_size_policy),
+    Output,
+  )
+}
+
+fn satoshis_parser() -> Parser(ParseContext, Int, DecodeError) {
+  Value
+  |> field_parser(reader.read_bytes(_, 8))
+  |> parser.map(fn(value_bytes) {
+    let assert Ok(value_i64) = int64.from_bytes_le(value_bytes)
+    value_i64
+  })
+  |> parser.try_with_start_offset(fn(value_i64, start_offset, _reader, ctx) {
+    // This should never happen.
+    // The max possible amount of satoshis 2_100_000_000_000_000 (2.1 quadrillion)
+    // is less than JavaScript's Number.MAX_SAFE_INTEGER
+    value_i64
+    |> int64.to_int
+    |> result.map_error(fn(_) {
+      value_i64
+      |> int64.to_string
+      |> IntegerOutOfRange
+      |> field_error(Value, start_offset, ctx)
+    })
+  })
+}
+
+fn validate_output_count(
+  output_count: Int,
+  reader: Reader,
+  max_output_count_policy: Int,
+  on_invalid: fn(DecodeErrorKind) -> Result(Int, DecodeError),
+) -> Result(Int, DecodeError) {
+  let min_output_size = 9
+  let remaining = reader.bytes_remaining(reader)
+  // Upper bound implied by remaining bytes (each output is at least 9 bytes)
+  let max_outputs_by_bytes = remaining / min_output_size
+
+  use <- bool.guard(
+    output_count > max_outputs_by_bytes,
+    on_invalid(InsufficientBytes(claimed: remaining + 1, remaining:)),
+  )
+
+  use <- bool.guard(
+    output_count > max_output_count_policy,
+    on_invalid(PolicyLimitExceeded(
+      MaxOutputCount,
+      output_count,
+      max_output_count_policy,
+    )),
+  )
+
+  Ok(output_count)
+}
+
+// ==============================================================================
+// Script Parsing
+// ==============================================================================
+
+fn script_sig_parser(
+  max_script_size_policy: Int,
+) -> Parser(ParseContext, ScriptBytes(InputScript), DecodeError) {
+  ScriptSigLength
+  |> script_length_parser(max_script_size_policy)
+  |> parser.then(checked_script_bytes_parser(ScriptSigLength, _))
+  |> parser.map(ScriptBytes)
+}
+
+fn script_pubkey_parser(
+  max_script_size_policy: Int,
+) -> Parser(ParseContext, ScriptBytes(OutputScript), DecodeError) {
+  ScriptPubKeyLength
+  |> script_length_parser(max_script_size_policy)
+  |> parser.then(checked_script_bytes_parser(ScriptPubKeyLength, _))
+  |> parser.map(ScriptBytes)
+}
+
+/// Construct a parser for a validated script length field.
+///
+/// When run, it parses a CompactSize length, converts it to `Int`, validates it
+/// against `max_script_size_policy`, and ensures sufficient bytes remain.
+fn script_length_parser(
+  field: ParseField,
+  max_script_size_policy: Int,
+) -> Parser(ParseContext, Int, DecodeError) {
+  field
+  |> compact_size_int_parser
+  |> parser.try_with_start_offset(fn(script_length, start_offset, reader, ctx) {
+    validate_script_length(
+      script_length,
+      reader,
+      max_script_size_policy,
+      fn(kind) {
+        kind
+        |> field_error(field, start_offset, ctx)
+        |> Error
+      },
+    )
+  })
+}
+
+/// Read script bytes after `script_length_parser` has validated the count.
+///
+/// The read should not fail after length validation, but map any future
+/// invariant break to the public length-field path rather than panicking.
+fn checked_script_bytes_parser(
+  field: ParseField,
+  count: Int,
+) -> Parser(ParseContext, BitArray, DecodeError) {
+  parser.from_reader(reader.read_bytes(_, count), fn(err, start_offset, ctx) {
+    err
+    |> decode.map_reader_error(UnexpectedEof)
+    |> field_error(field, start_offset, ctx)
+  })
+}
+
+fn validate_script_length(
+  script_length: Int,
+  reader: Reader,
+  max_script_size_policy: Int,
+  on_invalid: fn(DecodeErrorKind) -> Result(Int, DecodeError),
+) -> Result(Int, DecodeError) {
+  let remaining = reader.bytes_remaining(reader)
+
+  use <- bool.guard(
+    script_length > remaining,
+    on_invalid(InsufficientBytes(claimed: script_length, remaining:)),
+  )
+
+  use <- bool.guard(
+    script_length > max_script_size_policy,
+    on_invalid(PolicyLimitExceeded(
+      MaxScriptSize,
+      script_length,
+      max_script_size_policy,
+    )),
+  )
+
+  Ok(script_length)
+}
+
+// ==============================================================================
+// Witness Parsing
+// ==============================================================================
+
+fn witnesses_if_segwit_parser(
+  is_segwit: Bool,
+  input_count: Int,
+  policy: DecodePolicy,
+) -> Parser(ParseContext, Option(List(WitnessStack)), DecodeError) {
+  case is_segwit {
+    True ->
+      input_count
+      |> witnesses_parser(
+        policy.max_witness_stack_item_count,
+        policy.max_witness_stack_payload_size,
+      )
+      |> parser.map(Some)
+
+    False -> parser.return(None)
+  }
+}
+
+fn witnesses_parser(
+  input_count: Int,
+  max_witness_stack_item_count: Option(Int),
+  max_witness_stack_payload_size: Option(Int),
+) -> Parser(ParseContext, List(WitnessStack), DecodeError) {
+  input_count
+  |> parser.indexed_repeat(
+    witness_parser(max_witness_stack_item_count, max_witness_stack_payload_size),
+    AtWitnessStack,
+  )
+  |> parser.try_with_start_offset(fn(witnesses, start_offset, _reader, ctx) {
+    case list.all(witnesses, is_witness_stack_empty) {
+      True ->
+        SuperfluousWitnessRecord
+        |> new_decode_error(start_offset)
+        |> with_context(ctx)
+        |> Error
+
+      False -> Ok(witnesses)
+    }
+  })
+}
+
+fn witness_parser(
+  max_witness_stack_item_count: Option(Int),
+  max_witness_stack_payload_size: Option(Int),
+) -> Parser(ParseContext, WitnessStack, DecodeError) {
+  // WitnessStack for one input:
+  // ├─ item count (CompactSize)
+  // ├─ WitnessItem #0
+  // │    ├─ item length (CompactSize)
+  // │    └─ item bytes
+  // ├─ WitnessItem #1
+  // │    ├─ ...
+  // └─ WitnessItem #(item_count - 1)
+  use item_count <- parser.then(witness_item_count_parser(
+    max_witness_stack_item_count,
+  ))
+  use items <- parser.then(case max_witness_stack_payload_size {
+    Some(max_size) -> tracked_witness_items_parser(item_count, max_size)
+    None -> witness_items_parser(item_count)
+  })
+  parser.return(WitnessStack(item_count:, items:))
+}
+
+/// Construct a parser for a validated witness item count field.
+///
+/// When run, it parses a CompactSize count, converts it to `Int`, and validates
+/// it against the `max_witness_stack_item_count` policy.
+fn witness_item_count_parser(
+  max_witness_stack_item_count_policy: Option(Int),
+) -> Parser(ParseContext, Int, DecodeError) {
+  WitnessItemCount
+  |> compact_size_int_parser
+  |> parser.try_with_start_offset(fn(item_count, start_offset, _reader, ctx) {
+    case max_witness_stack_item_count_policy {
+      Some(max_items) if item_count > max_items ->
+        PolicyLimitExceeded(MaxWitnessStackItemCount, item_count, max_items)
+        |> field_error(WitnessItemCount, start_offset, ctx)
+        |> Error
+
+      _ -> Ok(item_count)
+    }
+  })
+}
+
+fn witness_items_parser(
+  item_count: Int,
+) -> Parser(ParseContext, List(WitnessItem), DecodeError) {
+  parser.indexed_repeat(item_count, witness_item_parser(), AtWitnessItem)
+}
+
+/// Construct a witness-items parser that tracks cumulative payload bytes.
+///
+/// When run, it fails fast if the total exceeds `max_total_bytes`.
+fn tracked_witness_items_parser(
+  item_count: Int,
+  max_total_bytes: Int,
+) -> Parser(ParseContext, List(WitnessItem), DecodeError) {
+  parser.indexed_repeat_with_limit(
+    item_count,
+    sized_witness_item_parser(),
+    AtWitnessItem,
+    max_total_bytes,
+    fn(exceeded_val, start_offset, ctx) {
+      PolicyLimitExceeded(
+        MaxWitnessStackPayloadSize,
+        exceeded_val,
+        max_total_bytes,
+      )
+      |> new_decode_error(start_offset)
+      |> with_context(ctx)
+    },
+  )
+}
+
+/// Construct a parser that returns a witness item with its byte size.
+fn sized_witness_item_parser() -> Parser(
+  ParseContext,
+  #(WitnessItem, Int),
+  DecodeError,
+) {
+  witness_item_parser()
+  |> parser.map(fn(item) {
+    let item_size =
+      item
+      |> get_witness_item_bytes
+      |> bit_array.byte_size
+
+    #(item, item_size)
+  })
+}
+
+fn witness_item_parser() -> Parser(ParseContext, WitnessItem, DecodeError) {
+  witness_item_length_parser()
+  |> parser.then(fn(item_length) {
+    parser.from_reader(
+      reader.read_bytes(_, item_length),
+      fn(err, start_offset, ctx) {
+        err
+        |> decode.map_reader_error(UnexpectedEof)
+        |> new_decode_error(start_offset)
+        |> with_context(ctx)
+      },
+    )
+  })
+  |> parser.map(WitnessItem)
+}
+
+fn witness_item_length_parser() -> Parser(ParseContext, Int, DecodeError) {
+  WitnessItemLength
+  |> compact_size_int_parser
+  |> parser.try_with_start_offset(fn(item_length, start_offset, reader, ctx) {
+    validate_witness_item_length(item_length, reader, fn(kind) {
+      kind
+      |> field_error(WitnessItemLength, start_offset, ctx)
+      |> Error
+    })
+  })
+}
+
+fn validate_witness_item_length(
+  item_length: Int,
+  reader: Reader,
+  on_invalid: fn(DecodeErrorKind) -> Result(Int, DecodeError),
+) -> Result(Int, DecodeError) {
+  let remaining = reader.bytes_remaining(reader)
+
+  case item_length > remaining {
+    True -> on_invalid(InsufficientBytes(claimed: item_length, remaining:))
+    False -> Ok(item_length)
+  }
+}
+
+// ==============================================================================
+// Context-Free Consensus Validation
+// ==============================================================================
+
+/// A violation of Bitcoin consensus rules detected during transaction validation.
+///
+/// Each variant identifies a specific rule that the transaction breaks.
+pub type ConsensusViolation {
+  /// The transaction has no inputs.
+  ///
+  /// Every Bitcoin transaction must contain at least one input.
+  /// Transactions with zero inputs are invalid under consensus rules.
+  NoInputs
+
+  /// The transaction has no outputs.
+  ///
+  /// Every Bitcoin transaction must contain at least one output.
+  /// Transactions with zero outputs are invalid under consensus rules.
+  NoOutputs
+
+  /// The stripped transaction serialization exceeded Bitcoin Core's
+  /// context-independent transaction base-size limit.
+  ///
+  /// The contained value is the measured base size in bytes: version,
+  /// CompactSize counts and script lengths, inputs, outputs, and lock time.
+  /// The maximum is 1,000,000 bytes. SegWit marker, flag, and witness bytes are
+  /// excluded from this transaction-level check but contribute to the separate
+  /// 4,000,000-WU block-weight limit.
+  BaseSizeLimitExceeded(Int)
+
+  /// An output value is outside the valid money range.
+  ///
+  /// Consensus requires each output value to satisfy:
+  ///
+  ///     0 <= value <= 2,100,000,000,000,000 satoshis
+  ///
+  /// The upper bound is 21,000,000 BTC expressed in satoshis.
+  ///
+  /// The `index` field indicates the zero-based position of the output,
+  /// and `value` is the invalid amount.
+  OutputValueOutOfRange(index: Int, value: Int)
+
+  /// The cumulative sum of output values exceeds the valid money range.
+  ///
+  /// During validation, Bitcoin nodes maintain a running total of all
+  /// output values and require that the cumulative sum never exceed
+  /// 2,100,000,000,000,000 satoshis.
+  ///
+  /// The `index` field indicates the zero-based position of the output
+  /// at which the running total first exceeded 2,100,000,000,000,000 satoshis.
+  ///
+  /// The `total` field is the cumulative output value at that point.
+  TotalOutputValueOutOfRange(index: Int, total: Int)
+
+  /// A transaction identified as a coinbase transaction contains
+  /// more than one input.
+  ///
+  /// A coinbase transaction is defined as a transaction whose single
+  /// input has a null outpoint. Under consensus rules, such a transaction
+  /// must contain exactly one input.
+  CoinbaseWithMultipleInputs
+
+  /// A coinbase transaction's scriptSig length is invalid.
+  ///
+  /// Coinbase scriptSig must be between 2 and 100 bytes (inclusive).
+  InvalidCoinbaseScriptSigLength
+
+  /// The transaction contains duplicate inputs referencing the same outpoint.
+  ///
+  /// Each input in a transaction must reference a unique previous output.
+  ///
+  /// The `outpoint` field identifies the duplicated outpoint.
+  ///
+  /// The `first_index` field indicates the zero-based index of the first
+  /// occurrence of this outpoint in the input list.
+  ///
+  /// The `duplicate_index` field indicates the zero-based index of the
+  /// subsequent input that duplicates the same outpoint.
+  DuplicateInput(outpoint: OutPoint, first_index: Int, duplicate_index: Int)
+}
+
+/// Validate a transaction against context-free Bitcoin consensus rules.
+///
+/// "Context-free" means these checks require only the transaction itself —
+/// no UTXO set, no block context, and no knowledge of other transactions.
+///
+/// This function enforces all Bitcoin consensus rules that apply to an
+/// individual transaction and can be evaluated without UTXO, script-execution,
+/// block, or chain context.
+///
+/// The following consensus rules are enforced:
+///
+///   - At least one input
+///   - At least one output
+///   - Base (stripped) serialization is at most 1,000,000 bytes, matching
+///     Bitcoin Core's transaction-level check. SegWit marker, flag, and witness
+///     bytes are excluded from this check but contribute to the enclosing
+///     block's separate 4,000,000-WU weight limit.
+///   - Output values are between 0 and 2,100,000,000,000,000 satoshis
+///   - Cumulative output value does not exceed 2,100,000,000,000,000 satoshis
+///   - Coinbase transactions contain exactly one input
+///   - Coinbase scriptSig length is 2–100 bytes (inclusive)
+///   - No two inputs reference the same previous output
+///
+/// Context-dependent checks — script execution, signature verification,
+/// input-spend validation against the UTXO set, and block-level rules — are not
+/// performed.
+///
+/// ## Returns
+///
+/// - `Ok(Transaction(ContextFreeValidated))`: The transaction passed all
+///   context-free consensus checks listed above.
+/// - `Error(violations)`: The transaction failed one or more context-free
+///   consensus checks. The list contains the detected violations.
+pub fn validate_context_free_consensus(
+  tx: Transaction(Parsed),
+) -> Result(Transaction(ContextFreeValidated), List(ConsensusViolation)) {
+  // Validators are designed to run together; some Ok branches rely on a sibling covering that case.
+  let validators = [
+    validate_at_least_one_input,
+    validate_at_least_one_output,
+    validate_stripped_size,
+    validate_output_values,
+    validate_coinbase_structure,
+    validate_coinbase_script_sig_length,
+    validate_no_duplicate_inputs,
+  ]
+
+  let violations =
+    list.filter_map(validators, fn(validator) {
+      case validator(tx) {
+        Ok(_) -> Error(Nil)
+        Error(violation) -> Ok(violation)
+      }
+    })
+
+  case violations {
+    [] -> Ok(mark_as_context_free_validated(tx))
+    _ -> Error(violations)
+  }
+}
+
+fn mark_as_context_free_validated(
+  tx: Transaction(Parsed),
+) -> Transaction(ContextFreeValidated) {
+  // Change the phantom type by reconstructing with identical data.
+  case tx {
+    Legacy(v, ic, i, oc, o, l) -> Legacy(v, ic, i, oc, o, l)
+    Segwit(v, ic, i, oc, o, l, w) -> Segwit(v, ic, i, oc, o, l, w)
+  }
+}
+
+fn validate_at_least_one_input(
+  tx: Transaction(Parsed),
+) -> Result(Nil, ConsensusViolation) {
+  case tx.inputs {
+    [] -> Error(NoInputs)
+    _ -> Ok(Nil)
+  }
+}
+
+fn validate_at_least_one_output(
+  tx: Transaction(Parsed),
+) -> Result(Nil, ConsensusViolation) {
+  case tx.outputs {
+    [] -> Error(NoOutputs)
+    _ -> Ok(Nil)
+  }
+}
+
+fn validate_stripped_size(
+  tx: Transaction(Parsed),
+) -> Result(Nil, ConsensusViolation) {
+  let size = compute_base_size(tx)
+  let max_stripped_tx_size = 1_000_000
+
+  case size > max_stripped_tx_size {
+    True -> Error(BaseSizeLimitExceeded(size))
+    False -> Ok(Nil)
+  }
+}
+
+fn validate_output_values(
+  tx: Transaction(Parsed),
+) -> Result(Nil, ConsensusViolation) {
+  validate_output_values_loop(tx.outputs, 0, 0)
+}
+
+/// The maximum number of satoshis that can exist: 21,000,000 BTC * 100,000,000 sat/BTC.
+const max_satoshis = 2_100_000_000_000_000
+
+fn validate_output_values_loop(
+  outputs: List(Output),
+  index: Int,
+  sum: Int,
+) -> Result(Nil, ConsensusViolation) {
+  case outputs {
+    [] -> Ok(Nil)
+
+    [output, ..rest] ->
+      case output.value {
+        v if v < 0 -> Error(OutputValueOutOfRange(index, v))
+        v if v > max_satoshis -> Error(OutputValueOutOfRange(index, v))
+        v -> {
+          let sum = sum + v
+          case sum > max_satoshis {
+            True -> Error(TotalOutputValueOutOfRange(index, sum))
+            False -> validate_output_values_loop(rest, index + 1, sum)
+          }
+        }
+      }
+  }
+}
+
+fn validate_coinbase_structure(
+  tx: Transaction(Parsed),
+) -> Result(Nil, ConsensusViolation) {
+  case has_coinbase_marker(tx) {
+    True ->
+      case tx.inputs {
+        [_] -> Ok(Nil)
+        _ -> Error(CoinbaseWithMultipleInputs)
+      }
+    False -> Ok(Nil)
+  }
+}
+
+fn validate_coinbase_script_sig_length(
+  tx: Transaction(Parsed),
+) -> Result(Nil, ConsensusViolation) {
+  case tx.inputs {
+    [input] ->
+      case input.outpoint {
+        NullOutPoint -> {
+          let script_size = get_script_size(input.script_sig)
+          case 2 <= script_size && script_size <= 100 {
+            True -> Ok(Nil)
+            False -> Error(InvalidCoinbaseScriptSigLength)
+          }
+        }
+
+        _ -> Ok(Nil)
+      }
+
+    // Zero inputs are caught by validate_at_least_one_input.
+    // Multiple inputs with a coinbase marker are caught by validate_coinbase_structure.
+    _ -> Ok(Nil)
+  }
+}
+
+fn validate_no_duplicate_inputs(
+  tx: Transaction(Parsed),
+) -> Result(Nil, ConsensusViolation) {
+  validate_no_duplicate_inputs_loop(tx.inputs, 0, dict.new())
+}
+
+fn validate_no_duplicate_inputs_loop(
+  inputs: List(Input),
+  index: Int,
+  seen: Dict(OutPoint, Int),
+) -> Result(Nil, ConsensusViolation) {
+  case inputs {
+    [] -> Ok(Nil)
+
+    [input, ..rest] -> {
+      let outpoint = input.outpoint
+
+      // NullOutPoint is skipped: validate_coinbase_structure already rejects any
+      // transaction with multiple NullOutPoint inputs as CoinbaseWithMultipleInputs.
+      case outpoint {
+        NullOutPoint -> validate_no_duplicate_inputs_loop(rest, index + 1, seen)
+
+        _ ->
+          case dict.get(seen, outpoint) {
+            Ok(first_index) ->
+              Error(DuplicateInput(
+                outpoint,
+                first_index:,
+                duplicate_index: index,
+              ))
+
+            Error(_) ->
+              validate_no_duplicate_inputs_loop(
+                rest,
+                index + 1,
+                dict.insert(seen, outpoint, index),
+              )
+          }
+      }
+    }
+  }
+}
+
+// ==============================================================================
+// Serialization
+// ==============================================================================
+
+/// Compute the transaction identifier (txid) for a transaction.
+///
+/// The txid is the double SHA-256 hash of the transaction's stripped serialization.
+/// The returned hash uses the same little-endian byte order found on the
+/// Bitcoin wire.
+pub fn compute_txid(tx: Transaction(state)) -> Hash256 {
+  let hash_bytes =
+    tx
+    |> serialize_stripped
+    |> double_sha256.hash
+
+  let assert Ok(hash) = hash256.from_bytes_le(hash_bytes)
+  hash
+}
+
+/// Compute the witness transaction identifier (wtxid) for a transaction.
+///
+/// The wtxid is the double SHA-256 hash of the transaction's full wire serialization.
+/// The returned hash uses the same little-endian byte order found on the
+/// Bitcoin wire. For legacy transactions, the wtxid is identical to the txid.
+pub fn compute_wtxid(tx: Transaction(state)) -> Hash256 {
+  let hash_bytes =
+    tx
+    |> serialize
+    |> double_sha256.hash
+
+  let assert Ok(hash) = hash256.from_bytes_le(hash_bytes)
+  hash
+}
+
+/// Serialize a transaction without witness data (the "stripped" form).
+///
+/// Returns the stripped transaction serialization used when computing the
+/// `txid`: version, inputs, outputs, and lock_time — with no SegWit marker,
+/// flag, or witness stacks, regardless of whether the transaction is SegWit.
+///
+/// The byte size of the returned value is the `base_size` used in BIP 141
+/// weight and virtual size calculations.
+///
+/// ## See Also
+///
+/// - `compute_txid` — hashes this serialization to produce the txid
+/// - `serialize` — the full wire serialization including witness data
+pub fn serialize_stripped(tx: Transaction(state)) -> BitArray {
+  let parts = [<<tx.lock_time:32-little>>]
+  let parts = collect_output_parts(list.reverse(tx.outputs), parts)
+  let parts = [compact_size.encode_int(tx.output_count), ..parts]
+  let parts = collect_input_parts(list.reverse(tx.inputs), parts)
+  let parts = [compact_size.encode_int(tx.input_count), ..parts]
+  let parts = [<<tx.version:32-little>>, ..parts]
+  bit_array.concat(parts)
+}
+
+/// Prepend each input's wire fields to a serialization-parts suffix.
+///
+/// The inputs must be supplied in reverse wire order so this loop remains
+/// tail-recursive while producing parts in wire order.
+fn collect_input_parts(
+  reversed_inputs: List(Input),
+  parts: List(BitArray),
+) -> List(BitArray) {
+  case reversed_inputs {
+    [] -> parts
+    [input, ..rest] -> {
+      let outpoint_txid_bytes =
+        hash256.to_bytes_le(get_outpoint_txid(input.outpoint))
+      let script_sig_bytes = get_raw_script_bytes(input.script_sig)
+      let script_sig_length = bit_array.byte_size(script_sig_bytes)
+
+      let parts = [
+        outpoint_txid_bytes,
+        <<get_outpoint_vout(input.outpoint):32-little>>,
+        compact_size.encode_int(script_sig_length),
+        script_sig_bytes,
+        <<input.sequence:32-little>>,
+        ..parts
+      ]
+      collect_input_parts(rest, parts)
+    }
+  }
+}
+
+/// Prepend each output's wire fields to a serialization-parts suffix.
+///
+/// The outputs must be supplied in reverse wire order so this loop remains
+/// tail-recursive while producing parts in wire order.
+fn collect_output_parts(
+  reversed_outputs: List(Output),
+  parts: List(BitArray),
+) -> List(BitArray) {
+  case reversed_outputs {
+    [] -> parts
+    [output, ..rest] -> {
+      let script_pubkey_bytes = get_raw_script_bytes(output.script_pubkey)
+      let script_pubkey_length = bit_array.byte_size(script_pubkey_bytes)
+
+      let parts = [
+        <<output.value:64-little>>,
+        compact_size.encode_int(script_pubkey_length),
+        script_pubkey_bytes,
+        ..parts
+      ]
+      collect_output_parts(rest, parts)
+    }
+  }
+}
+
+/// Serialize a transaction in its full wire form, including witness data.
+///
+/// Returns the complete serialization used when computing the `wtxid`:
+/// version, SegWit marker and flag (if applicable), inputs, outputs,
+/// witness stacks (if applicable), and lock_time. For legacy transactions,
+/// this is identical to `serialize_stripped`.
+///
+/// The byte size of the returned value is the `total_size` used in BIP 141
+/// weight and virtual size calculations:
+///
+/// ```
+/// weight = base_size * 3 + total_size
+/// vsize  = ceil(weight / 4)
+/// ```
+///
+/// where `base_size = bit_array.byte_size(serialize_stripped(tx))` and
+/// `total_size = bit_array.byte_size(serialize(tx))`.
+///
+/// ## See Also
+///
+/// - `compute_wtxid` — hashes this serialization to produce the wtxid
+/// - `serialize_stripped` — the no-witness serialization used for the txid
+pub fn serialize(tx: Transaction(state)) -> BitArray {
+  let parts = [<<tx.lock_time:32-little>>]
+  let parts = case tx {
+    Legacy(..) -> parts
+    Segwit(witnesses:, ..) ->
+      collect_witness_parts(list.reverse(witnesses), parts)
+  }
+  let parts = collect_output_parts(list.reverse(tx.outputs), parts)
+  let parts = [compact_size.encode_int(tx.output_count), ..parts]
+  let parts = collect_input_parts(list.reverse(tx.inputs), parts)
+  let parts = [compact_size.encode_int(tx.input_count), ..parts]
+  let parts = case tx {
+    Legacy(..) -> parts
+    Segwit(..) -> [<<0x00, 0x01>>, ..parts]
+  }
+  let parts = [<<tx.version:32-little>>, ..parts]
+  bit_array.concat(parts)
+}
+
+/// Prepend each witness stack's wire fields to a serialization-parts suffix.
+///
+/// The witness stacks must be supplied in reverse wire order. Each stack's
+/// items are reversed internally so both loops remain tail-recursive while
+/// producing parts in wire order.
+fn collect_witness_parts(
+  reversed_witnesses: List(WitnessStack),
+  parts: List(BitArray),
+) -> List(BitArray) {
+  case reversed_witnesses {
+    [] -> parts
+    [witness_stack, ..rest] -> {
+      let parts =
+        collect_witness_item_parts(list.reverse(witness_stack.items), parts)
+      let parts = [compact_size.encode_int(witness_stack.item_count), ..parts]
+      collect_witness_parts(rest, parts)
+    }
+  }
+}
+
+fn collect_witness_item_parts(
+  reversed_items: List(WitnessItem),
+  parts: List(BitArray),
+) -> List(BitArray) {
+  case reversed_items {
+    [] -> parts
+    [item, ..rest] -> {
+      let item_bytes = get_witness_item_bytes(item)
+      let item_length = bit_array.byte_size(item_bytes)
+      let parts = [compact_size.encode_int(item_length), item_bytes, ..parts]
+      collect_witness_item_parts(rest, parts)
+    }
+  }
+}

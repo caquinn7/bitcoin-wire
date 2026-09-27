@@ -1,12 +1,12 @@
-name = "btc_parser_fuzz"
+name = "bitcoin_wire_fuzz"
 version = "1.0.0"
 
 gleam = ">= 1.16.0"
 
 target = "erlang"
 internal_modules = [
-  "btc_parser_fuzz/internal",
-  "btc_parser_fuzz/internal/*",
+  "bitcoin_wire_fuzz/internal",
+  "bitcoin_wire_fuzz/internal/*",
 ]
 
 [javascript]
@@ -17,7 +17,7 @@ source_maps = true
 allow_read = true
 
 [dependencies]
-btc_parser = { path = ".." }
+bitcoin_wire = { path = ".." }
 gleam_stdlib = ">= 0.44.0 and < 2.0.0"
 gleam_crypto = ">= 1.5.1 and < 2.0.0"
 argv = ">= 1.0.2 and < 2.0.0"

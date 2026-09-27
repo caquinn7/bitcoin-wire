@@ -1,8 +1,8 @@
-# `btc_parser` examples
+# `bitcoin_wire` examples
 
-This standalone Erlang project demonstrates the public `btc_parser` API with
+This standalone Erlang project demonstrates the public `bitcoin_wire` API with
 raw mainnet data fetched from [mempool.space](https://mempool.space). It is not
-part of the library package and adds no networking API to `btc_parser`.
+part of the library package and adds no networking API to `bitcoin_wire`.
 
 Run commands from the repository root. Each completed example writes one JSON
 document to stdout. Invalid command-line input and network failures are written
@@ -53,4 +53,4 @@ the parser's byte offset, structural path, and kind-specific details as JSON.
 - mempool.space is an external data source; availability and responses are not
   guaranteed by this repository.
 - Identifiers and hashes in JSON use Bitcoin's conventional display byte order.
-  Raw `btc_parser` hash values preserve wire byte order.
+  Raw `bitcoin_wire` hash values preserve wire byte order.

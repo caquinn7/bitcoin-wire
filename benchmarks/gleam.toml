@@ -1,12 +1,12 @@
-name = "btc_parser_benchmarks"
+name = "bitcoin_wire_benchmarks"
 version = "1.0.0"
 
 gleam = ">= 1.16.0"
 
 target = "erlang"
 internal_modules = [
-  "btc_parser_benchmarks/internal",
-  "btc_parser_benchmarks/internal/*",
+  "bitcoin_wire_benchmarks/internal",
+  "bitcoin_wire_benchmarks/internal/*",
 ]
 
 [javascript]
@@ -18,7 +18,7 @@ allow_read = true
 allow_write = true
 
 [dependencies]
-btc_parser = { path = ".." }
+bitcoin_wire = { path = ".." }
 gleam_stdlib = ">= 0.44.0 and < 2.0.0"
 argv = ">= 1.0.2 and < 2.0.0"
 filepath = ">= 1.1.2 and < 2.0.0"
