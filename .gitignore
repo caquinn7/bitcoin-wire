@@ -4,4 +4,4 @@
 erl_crash.dump
 /resources
 .DS_Store
-/test/btc_parser/block/fixtures/get_block_hex.sh
+/test/bitcoin_wire/block/fixtures/get_block_hex.sh

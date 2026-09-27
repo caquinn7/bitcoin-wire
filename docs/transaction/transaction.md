@@ -1,4 +1,4 @@
-# `btc_parser/transaction`
+# `bitcoin_wire/transaction`
 
 The transaction domain deserializes, inspects, validates, and serializes Bitcoin
 transactions while preserving Bitcoin's wire representation.
@@ -29,8 +29,8 @@ transactions while preserving Bitcoin's wire representation.
 ## Quick Start
 
 ```gleam
-import btc_parser/hash256
-import btc_parser/transaction
+import bitcoin_wire/hash256
+import bitcoin_wire/transaction
 import gleam/result
 
 pub fn display_txid_from_bytes(
@@ -67,5 +67,5 @@ or network/RPC access.
 
 ## Documentation
 
-- [Output script classification](https://github.com/caquinn7/btc-parser/blob/main/docs/transaction/output_script_classification.md)
-- [Project overview](https://github.com/caquinn7/btc-parser)
+- [Output script classification](https://github.com/caquinn7/bitcoin-wire/blob/main/docs/transaction/output_script_classification.md)
+- [Project overview](https://github.com/caquinn7/bitcoin-wire)

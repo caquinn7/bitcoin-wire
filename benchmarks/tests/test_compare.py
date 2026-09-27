@@ -18,7 +18,7 @@ from unittest import mock
 
 
 SCRIPT = Path(__file__).resolve().parents[1] / "scripts" / "compare.py"
-SPEC = importlib.util.spec_from_file_location("btc_parser_benchmark_compare", SCRIPT)
+SPEC = importlib.util.spec_from_file_location("bitcoin_wire_benchmark_compare", SCRIPT)
 if SPEC is None or SPEC.loader is None:  # pragma: no cover - importlib contract
     raise RuntimeError(f"could not load {SCRIPT}")
 compare = importlib.util.module_from_spec(SPEC)
@@ -73,7 +73,7 @@ def command(*arguments, cwd):
     )
 
 
-def make_repository(path, package_name="btc_parser"):
+def make_repository(path, package_name="bitcoin_wire"):
     path.mkdir()
     command("init", "--quiet", cwd=path)
     (path / "gleam.toml").write_text(
@@ -227,7 +227,7 @@ class WorktreeTests(TemporaryDirectoryTestCase):
         wrong_package = make_repository(self.directory / "wrong", "another_package")
         dependency_only = make_repository(self.directory / "dependency-only")
         (dependency_only / "gleam.toml").write_text(
-            'name = "another_package"\n[dependencies]\nbtc_parser = { path = ".." }\n',
+            'name = "another_package"\n[dependencies]\nbitcoin_wire = { path = ".." }\n',
             encoding="utf-8",
         )
         file_path = self.directory / "file"
@@ -290,8 +290,8 @@ class SnapshotTests(TemporaryDirectoryTestCase):
         )
 
     def test_retarget_rejects_missing_duplicate_and_wrong_expected_records(self):
-        dependency = 'btc_parser = { path = ".." }\n'
-        package = '{ name = "btc_parser", source = "local", path = ".." }'
+        dependency = 'bitcoin_wire = { path = ".." }\n'
+        package = '{ name = "bitcoin_wire", source = "local", path = ".." }'
         valid_gleam = "[dependencies]\n" + dependency
         valid_manifest = f"packages = [{package}]\n[requirements]\n{dependency}"
         cases = (
@@ -304,7 +304,7 @@ class SnapshotTests(TemporaryDirectoryTestCase):
             ("wrong manifest package path", valid_gleam, valid_manifest.replace('path = ".."', 'path = "../other"', 1)),
             ("missing manifest requirement", valid_gleam, valid_manifest.replace(dependency, "")),
             ("duplicate manifest requirement", valid_gleam, valid_manifest + dependency),
-            ("wrong manifest requirement path", valid_gleam, valid_manifest.replace(dependency, 'btc_parser = { path = "../other" }\n')),
+            ("wrong manifest requirement path", valid_gleam, valid_manifest.replace(dependency, 'bitcoin_wire = { path = "../other" }\n')),
         )
         for label, gleam, manifest in cases:
             with self.subTest(label=label):

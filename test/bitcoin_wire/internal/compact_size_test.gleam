@@ -1,0 +1,225 @@
+import bitcoin_wire/internal/compact_size.{NonMinimalCompactSize}
+import bitcoin_wire/internal/fixed_int/uint64
+import bitcoin_wire/internal/reader
+import exception
+import support/offset_bit_array
+
+// ===============================
+// Read
+// ===============================
+
+// Single-byte encoding (values 0-252)
+
+pub fn read_returns_single_byte_value_test() {
+  let assert Ok(initial_reader) = reader.new(<<0xFC, 0xAA>>)
+  let assert Ok(#(reader, value)) = compact_size.read(initial_reader)
+  let assert Ok(expected) = uint64.from_bytes_le(<<0xFC, 0, 0, 0, 0, 0, 0, 0>>)
+
+  assert value == expected
+  assert reader.get_offset(reader) == 1
+  assert reader.get_remaining(reader) == <<0xAA>>
+}
+
+// 0xfd prefix (2-byte encoding, values 253-65535)
+
+pub fn read_accepts_minimal_fd_threshold_value_test() {
+  // Value 253 is the minimum that requires 0xfd prefix
+  let assert Ok(initial_reader) = reader.new(<<0xFD, 0xFD, 0x00>>)
+  let assert Ok(#(reader, value)) = compact_size.read(initial_reader)
+  let assert Ok(expected) = uint64.from_bytes_le(<<0xFD, 0, 0, 0, 0, 0, 0, 0>>)
+
+  assert value == expected
+  assert reader.get_offset(reader) == 3
+}
+
+pub fn read_reads_fd_prefixed_value_test() {
+  // 0xfd prefix with 0x00fd (253) little-endian payload
+  let assert Ok(initial_reader) = reader.new(<<0xFD, 0xFD, 0x00, 0x99>>)
+  let assert Ok(#(reader, value)) = compact_size.read(initial_reader)
+  let assert Ok(expected) = uint64.from_bytes_le(<<0xFD, 0, 0, 0, 0, 0, 0, 0>>)
+
+  assert value == expected
+  assert reader.get_offset(reader) == 3
+  assert reader.get_remaining(reader) == <<0x99>>
+}
+
+pub fn read_errors_on_non_minimal_fd_encoding_test() {
+  // Value 252 must use the single-byte form; a 0xfd prefix is non-minimal.
+  let assert Ok(initial_reader) = reader.new(<<0xFD, 0xFC, 0x00>>)
+
+  assert compact_size.read(initial_reader)
+    == Error(NonMinimalCompactSize(encoded_size: 3, value: 252))
+}
+
+pub fn read_errors_on_partial_fd_read_test() {
+  // 0xfd prefix requires 2 bytes, but only 1 is available
+  let assert Ok(initial_reader) = reader.new(<<0xFD, 0x01>>)
+
+  assert compact_size.read(initial_reader)
+    == Error(
+      compact_size.ReaderError(reader.UnexpectedEof(
+        bytes_needed: 2,
+        remaining: 1,
+      )),
+    )
+}
+
+// 0xfe prefix (4-byte encoding, values 65536-4294967295)
+
+pub fn read_accepts_minimal_fe_threshold_value_test() {
+  // Value 65536 is the minimum that requires 0xfe prefix
+  let assert Ok(initial_reader) = reader.new(<<0xFE, 0x00, 0x00, 0x01, 0x00>>)
+  let assert Ok(#(reader, value)) = compact_size.read(initial_reader)
+  let assert Ok(expected) =
+    uint64.from_bytes_le(<<0x00, 0x00, 0x01, 0x00, 0, 0, 0, 0>>)
+
+  assert value == expected
+  assert reader.get_offset(reader) == 5
+}
+
+pub fn read_reads_fe_prefixed_value_test() {
+  // 0xfe prefix with 0x00010000 (65_536) little-endian payload
+  let assert Ok(initial_reader) =
+    reader.new(<<0xFE, 0x00, 0x00, 0x01, 0x00, 0x01>>)
+  let assert Ok(#(reader, value)) = compact_size.read(initial_reader)
+  let assert Ok(expected) =
+    uint64.from_bytes_le(<<0x00, 0x00, 0x01, 0x00, 0, 0, 0, 0>>)
+
+  assert value == expected
+  assert reader.get_offset(reader) == 5
+  assert reader.get_remaining(reader) == <<0x01>>
+}
+
+pub fn read_errors_on_non_minimal_fe_encoding_test() {
+  // Value 65535 must use 0xfd prefix; a 0xfe prefix is non-minimal.
+  let assert Ok(initial_reader) = reader.new(<<0xFE, 0xFF, 0xFF, 0x00, 0x00>>)
+
+  assert compact_size.read(initial_reader)
+    == Error(NonMinimalCompactSize(encoded_size: 5, value: 65_535))
+}
+
+pub fn read_errors_on_partial_fe_read_test() {
+  let assert Ok(initial_reader) = reader.new(<<0xFE, 0x01, 0x02>>)
+
+  assert compact_size.read(initial_reader)
+    == Error(
+      compact_size.ReaderError(reader.UnexpectedEof(
+        bytes_needed: 4,
+        remaining: 2,
+      )),
+    )
+}
+
+// 0xff prefix (8-byte encoding, values 4294967296+)
+
+pub fn read_accepts_minimal_ff_threshold_value_test() {
+  // Value 0x100000000 is the minimum that requires 0xff prefix
+  let assert Ok(initial_reader) =
+    reader.new(<<0xFF, 0x00, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00>>)
+  let assert Ok(#(reader, value)) = compact_size.read(initial_reader)
+  let assert Ok(expected) =
+    uint64.from_bytes_le(<<0x00, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00>>)
+
+  assert value == expected
+  assert reader.get_offset(reader) == 9
+}
+
+pub fn read_converts_minimal_ff_threshold_value_with_one_bit_offset_test() {
+  let bytes =
+    offset_bit_array.with_one_bit_offset(<<
+      0xFF,
+      0x00,
+      0x00,
+      0x00,
+      0x00,
+      0x01,
+      0x00,
+      0x00,
+      0x00,
+    >>)
+  let assert Ok(initial_reader) = reader.new(bytes)
+  let assert Ok(#(_, value)) = compact_size.read(initial_reader)
+
+  assert uint64.to_int(value) == Ok(4_294_967_296)
+}
+
+pub fn read_reads_ff_prefixed_value_test() {
+  let max_value_bytes = <<0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF>>
+  let assert Ok(initial_reader) = reader.new(<<0xFF, max_value_bytes:bits>>)
+  let assert Ok(#(reader, value)) = compact_size.read(initial_reader)
+  let assert Ok(expected) = uint64.from_bytes_le(max_value_bytes)
+
+  assert value == expected
+  assert reader.get_offset(reader) == 9
+  assert reader.get_remaining(reader) == <<>>
+}
+
+pub fn read_errors_on_non_minimal_ff_encoding_test() {
+  // Value with upper 32 bits zero must use a shorter encoding.
+  let assert Ok(initial_reader) =
+    reader.new(<<0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0x00, 0x00, 0x00, 0x00>>)
+
+  assert compact_size.read(initial_reader)
+    == Error(NonMinimalCompactSize(encoded_size: 9, value: 4_294_967_295))
+}
+
+pub fn read_errors_on_partial_ff_read_test() {
+  // 0xff prefix requires 8 bytes, but only 7 are available
+  let assert Ok(initial_reader) =
+    reader.new(<<0xFF, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07>>)
+
+  assert compact_size.read(initial_reader)
+    == Error(
+      compact_size.ReaderError(reader.UnexpectedEof(
+        bytes_needed: 8,
+        remaining: 7,
+      )),
+    )
+}
+
+// ===============================
+// Encode Int
+// ===============================
+
+pub fn encode_int_covers_compact_size_boundaries_test() {
+  assert compact_size.encode_int(0) == <<0>>
+  assert compact_size.encode_int(252) == <<0xFC>>
+  assert compact_size.encode_int(253) == <<0xFD, 0xFD, 0>>
+  assert compact_size.encode_int(65_535) == <<0xFD, 0xFF, 0xFF>>
+  assert compact_size.encode_int(65_536) == <<0xFE, 0, 0, 1, 0>>
+  assert compact_size.encode_int(4_294_967_295)
+    == <<0xFE, 0xFF, 0xFF, 0xFF, 0xFF>>
+  assert compact_size.encode_int(4_294_967_296)
+    == <<0xFF, 0, 0, 0, 0, 1, 0, 0, 0>>
+}
+
+pub fn encode_int_panics_for_negative_value_test() {
+  let assert Error(_) = exception.rescue(fn() { compact_size.encode_int(-1) })
+}
+
+// ===============================
+// Encoded size
+// ===============================
+
+pub fn encoded_size_returns_one_for_single_byte_range_test() {
+  assert compact_size.encoded_size(0) == 1
+  assert compact_size.encoded_size(252) == 1
+}
+
+pub fn encoded_size_returns_three_for_fd_range_test() {
+  assert compact_size.encoded_size(253) == 3
+  assert compact_size.encoded_size(65_535) == 3
+}
+
+pub fn encoded_size_returns_five_for_fe_range_test() {
+  assert compact_size.encoded_size(65_536) == 5
+  assert compact_size.encoded_size(4_294_967_295) == 5
+}
+
+pub fn encoded_size_returns_nine_at_ff_threshold_test() {
+  assert compact_size.encoded_size(4_294_967_296) == 9
+}
+
+pub fn encoded_size_panics_for_negative_value_test() {
+  let assert Error(_) = exception.rescue(fn() { compact_size.encoded_size(-1) })
+}

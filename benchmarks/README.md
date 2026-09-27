@@ -1,6 +1,6 @@
 # Performance Benchmarks
 
-This directory is a standalone Gleam project containing the `btc_parser`
+This directory is a standalone Gleam project containing the `bitcoin_wire`
 benchmark harness. It consumes the library through its public API, combines
 domain suites for transactions and blocks, and is intended to catch broad
 performance regressions in public workflows. Compare trends and relative
@@ -137,10 +137,10 @@ example, keep the candidate in the current checkout and add a baseline beside
 it:
 
 ```sh
-git worktree add ../btc-parser-baseline main
+git worktree add ../bitcoin-wire-baseline main
 
 python3 benchmarks/scripts/compare.py \
-  --baseline ../btc-parser-baseline \
+  --baseline ../bitcoin-wire-baseline \
   --candidate . \
   --section block.compute-merkle-root \
   --target erlang \
@@ -148,7 +148,7 @@ python3 benchmarks/scripts/compare.py \
 ```
 
 Both paths must be Git worktree roots whose `gleam.toml` declares the
-`btc_parser` package. They may be clean or dirty, and the runner never modifies
+`bitcoin_wire` package. They may be clean or dirty, and the runner never modifies
 them. It records each worktree's path, commit, branch or detached state, and
 porcelain status in the report. A dirty worktree is useful while developing,
 but its results are not completely reproducible from the recorded commit.
@@ -161,7 +161,7 @@ JavaScript runtime explicitly when needed:
 
 ```sh
 python3 benchmarks/scripts/compare.py \
-  --baseline ../btc-parser-baseline \
+  --baseline ../bitcoin-wire-baseline \
   --candidate . \
   --section transaction.deserialize \
   --section transaction.serialize.fixtures \

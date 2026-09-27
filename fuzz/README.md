@@ -1,4 +1,4 @@
-# Fuzz Testing - `btc_parser`
+# Fuzz Testing
 
 ## Overview
 
@@ -135,7 +135,7 @@ Its corpus is
 [`fuzz/corpus/transaction/seed_txs.txt`](corpus/transaction/seed_txs.txt), using
 `txid|codes|raw_hex` records. Labels are documented in
 [`fuzz/corpus/transaction/seed_txs_codes.txt`](corpus/transaction/seed_txs_codes.txt).
-See [`corpus_checklist.md`](src/btc_parser_fuzz/transaction/corpus_checklist.md)
+See [`corpus_checklist.md`](src/bitcoin_wire_fuzz/transaction/corpus_checklist.md)
 for seed coverage and selection rationale.
 
 ### Transaction Corpus Metrics
@@ -143,7 +143,7 @@ for seed coverage and selection rationale.
 Generate a deterministic tab-separated inventory of every transaction seed:
 
 ```sh
-./fuzz/run -m btc_parser_fuzz/transaction/corpus_metrics
+./fuzz/run -m bitcoin_wire_fuzz/transaction/corpus_metrics
 ```
 
 The recorded and derived codes exhaustively describe the selected 26 coverage
@@ -156,12 +156,12 @@ counts for every public output-script classifier variant. It also recomputes
 the display txid and wtxid. The command requires every seed to deserialize and
 round-trip through complete serialization before reporting it.
 
-The extractor uses only the public `btc_parser/transaction` API. Run it on
+The extractor uses only the public `bitcoin_wire/transaction` API. Run it on
 JavaScript with the same Gleam flags used by the fuzz suite:
 
 ```sh
 ./fuzz/run -t javascript --runtime node \
-  -m btc_parser_fuzz/transaction/corpus_metrics
+  -m bitcoin_wire_fuzz/transaction/corpus_metrics
 ```
 
 ## Block Workflow
@@ -199,7 +199,7 @@ Its corpus is
 decimal mainnet heights. See
 [`fuzz/corpus/block/seed_blocks_codes.txt`](corpus/block/seed_blocks_codes.txt)
 for the coverage taxonomy represented by the `codes` field and the
-[block corpus checklist](src/btc_parser_fuzz/block/corpus_checklist.md)
+[block corpus checklist](src/bitcoin_wire_fuzz/block/corpus_checklist.md)
 for seed metrics and selection rationale.
 
 ## Mutations and Scope

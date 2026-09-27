@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Compare aggregate benchmark CSVs from two btc_parser worktrees."""
+"""Compare aggregate benchmark CSVs from two bitcoin_wire worktrees."""
 
 from __future__ import annotations
 
@@ -106,7 +106,7 @@ def trial_count(value: str) -> int:
 def parse_args(argv: Optional[Sequence[str]] = None, *, cwd: Optional[Path] = None,
                benchmarks: Path = BENCHMARKS) -> Config:
     parser = argparse.ArgumentParser(
-        description="Compare aggregate benchmarks from two btc_parser worktrees."
+        description="Compare aggregate benchmarks from two bitcoin_wire worktrees."
     )
     parser.add_argument("--baseline", required=True)
     parser.add_argument("--candidate", required=True)
@@ -211,7 +211,7 @@ def git(path: Path, *args: str, ok: Iterable[int] = (0,)) -> subprocess.Complete
 
 
 ROOT_NAME = re.compile(
-    r"^[ \t]*name[ \t]*=[ \t]*(?:\"btc_parser\"|'btc_parser')[ \t]*(?:#.*)?$",
+    r"^[ \t]*name[ \t]*=[ \t]*(?:\"bitcoin_wire\"|'bitcoin_wire')[ \t]*(?:#.*)?$",
     re.MULTILINE,
 )
 
@@ -234,7 +234,7 @@ def worktree_state(path: Path) -> State:
             break
         root_lines.append(line)
     if not ROOT_NAME.search("\n".join(root_lines)):
-        raise Error(f"worktree gleam.toml does not declare package btc_parser: {project}")
+        raise Error(f"worktree gleam.toml does not declare package bitcoin_wire: {project}")
     commit = git(path, "rev-parse", "HEAD").stdout.strip()
     if not commit:
         raise Error(f"Git did not report a commit for {path}")
@@ -276,16 +276,16 @@ def rewrite_wrapper(wrapper: Path, dependency: Path) -> None:
     gleam, manifest = wrapper / "gleam.toml", wrapper / "manifest.toml"
     try:
         gleam_text = rewrite_section(
-            gleam.read_text(encoding="utf-8"), "dependencies", "btc_parser",
+            gleam.read_text(encoding="utf-8"), "dependencies", "bitcoin_wire",
             str(dependency), "benchmark gleam.toml dependency",
         )
         text = manifest.read_text(encoding="utf-8")
         records = [match for match in re.finditer(r"\{[^{}]*\}", text, re.DOTALL)
-                   if re.search(r'\bname\s*=\s*"btc_parser"', match.group())]
+                   if re.search(r'\bname\s*=\s*"bitcoin_wire"', match.group())]
         if len(records) != 1 or not re.search(
             r'\bsource\s*=\s*"local"', records[0].group()
         ):
-            raise Error("expected exactly one local btc_parser package record in manifest")
+            raise Error("expected exactly one local bitcoin_wire package record in manifest")
         record = records[0]
         paths = list(PATH.finditer(record.group()))
         if len(paths) != 1 or paths[0].group(2) not in ('".."', "'..'"):
@@ -296,7 +296,7 @@ def rewrite_wrapper(wrapper: Path, dependency: Path) -> None:
                           record.group()[path_match.end(2):])
         text = text[:record.start()] + changed_record + text[record.end():]
         manifest_text = rewrite_section(
-            text, "requirements", "btc_parser", str(dependency),
+            text, "requirements", "bitcoin_wire", str(dependency),
             "benchmark manifest requirement",
         )
         gleam.write_text(gleam_text, encoding="utf-8")
@@ -602,7 +602,7 @@ def execute(config: Config, command: str, now: Optional[dt.datetime] = None) -> 
         harness_commit = git(config.benchmarks.parent, "rev-parse", "HEAD").stdout.strip()
         if not harness_commit:
             raise Error(f"Git did not report a harness commit for {config.benchmarks.parent}")
-        temporary_root = Path(tempfile.mkdtemp(prefix="btc-parser-benchmark-compare-"))
+        temporary_root = Path(tempfile.mkdtemp(prefix="bitcoin-wire-benchmark-compare-"))
         try:
             wrappers = {}
             source = temporary_root / "snapshot"

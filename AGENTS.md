@@ -2,14 +2,10 @@
 
 ## Project Purpose
 
-`btc_parser` is a Gleam library for working with Bitcoin data structures. Its
-transaction domain deserializes wire bytes, exposes transaction fields,
-classifies output scripts, serializes transactions, and runs context-free
-consensus checks. Its block domain deserializes and serializes complete blocks,
-exposes header fields and embedded transactions, computes sizes, weights,
-Merkle roots, and block hashes, and runs context-free consensus checks. It aims
-to mirror Bitcoin's wire format closely, expose malformed encodings as structured
-errors, and remain portable across Erlang and JavaScript targets.
+`bitcoin_wire` is a Gleam library for deserializing, inspecting, hashing,
+serializing, and performing context-free consensus checks on Bitcoin
+transactions and blocks. It preserves exact wire values across Erlang and
+JavaScript and reports malformed encodings as structured errors.
 
 This library does not perform full transaction or block validation. Do not add
 behavior that requires UTXO lookup, script execution, signature verification,
@@ -18,62 +14,62 @@ changes.
 
 ## Architecture
 
-- `src/btc_parser/transaction.gleam` defines the public transaction API and
+- `src/bitcoin_wire/transaction.gleam` defines the public transaction API and
   transaction data model. It contains opaque transaction/input/output/script
   types, whole-value deserialization, decode policy, decode errors, output script
   classification, context-free consensus validation, serialization, and
   txid/wtxid computation.
-- `src/btc_parser/block.gleam` defines the public block API and block/header
+- `src/bitcoin_wire/block.gleam` defines the public block API and block/header
   data model. It deserializes complete blocks by decoding a block header,
   CompactSize transaction count, and contained transaction prefixes; exposes
   header and transaction accessors; and owns block decode policies and
   block-level decode errors. It computes block sizes, weights, Merkle roots, and
   block hashes; serializes headers and complete blocks; and performs documented
   context-free consensus validation using a caller-supplied proof-of-work limit.
-- `src/btc_parser/hash256.gleam` exposes fixed-width hashes in wire-order
+- `src/bitcoin_wire/hash256.gleam` exposes fixed-width hashes in wire-order
   little-endian bytes for transaction identifiers, block-header hashes, and
   Merkle roots, with raw-byte and conventional display conversions.
-- `src/btc_parser/internal/reader.gleam` is the byte reader. It owns offset
+- `src/bitcoin_wire/internal/reader.gleam` is the byte reader. It owns offset
   tracking and byte-aligned reads.
-- `src/btc_parser/internal/parser.gleam` is a function-backed parser combinator
+- `src/bitcoin_wire/internal/parser.gleam` is a function-backed parser combinator
   layer used to thread readers and parse contexts and attach indexed locations
   to errors.
-- `src/btc_parser/internal/decode.gleam` maps shared reader and CompactSize
+- `src/bitcoin_wire/internal/decode.gleam` maps shared reader and CompactSize
   errors into domain-owned decode errors and converts exact unsigned 64-bit
   values to target-safe `Int`s.
-- `src/btc_parser/internal/compact_size.gleam` handles Bitcoin CompactSize
+- `src/bitcoin_wire/internal/compact_size.gleam` handles Bitcoin CompactSize
   read/encode, including minimal-encoding checks.
-- `src/btc_parser/internal/fixed_int/*.gleam` stores signed and unsigned
+- `src/bitcoin_wire/internal/fixed_int/*.gleam` stores signed and unsigned
   fixed-width values, including 64-bit and 256-bit integers, as little-endian
   bytes so values remain exact on JavaScript.
-- `src/btc_parser/internal/pow_target.gleam` expands compact target encodings,
+- `src/bitcoin_wire/internal/pow_target.gleam` expands compact target encodings,
   preserves nonzero unsigned 256-bit targets exactly, and compares targets,
   proof-of-work limits, and block hashes without target-native integer loss.
-- `src/btc_parser/internal/lifecycle.gleam` provides the shared phantom types
+- `src/bitcoin_wire/internal/lifecycle.gleam` provides the shared phantom types
   that mark parsed values and values that passed available context-free
   validation.
-- `fuzz/` is an independent Gleam project that consumes `btc_parser` through its
-  public API. `fuzz/src/btc_parser_fuzz.gleam` is its CLI entrypoint,
-  `fuzz/src/btc_parser_fuzz/fuzz_result.gleam` and
-  `fuzz/src/btc_parser_fuzz/report.gleam` own suite-neutral result data and
-  reporting, `fuzz/src/btc_parser_fuzz/transaction/` owns the transaction
-  suite and its failure formatter, `fuzz/src/btc_parser_fuzz/block/` owns the
+- `fuzz/` is an independent Gleam project that consumes `bitcoin_wire` through its
+  public API. `fuzz/src/bitcoin_wire_fuzz.gleam` is its CLI entrypoint,
+  `fuzz/src/bitcoin_wire_fuzz/fuzz_result.gleam` and
+  `fuzz/src/bitcoin_wire_fuzz/report.gleam` own suite-neutral result data and
+  reporting, `fuzz/src/bitcoin_wire_fuzz/transaction/` owns the transaction
+  suite and its failure formatter, `fuzz/src/bitcoin_wire_fuzz/block/` owns the
   block suite and its failure formatter,
-  `fuzz/src/btc_parser_fuzz/internal/` contains the RNG and trace utilities, and
+  `fuzz/src/bitcoin_wire_fuzz/internal/` contains the RNG and trace utilities, and
   `fuzz/corpus/transaction/` and `fuzz/corpus/block/` contain the respective
   seed corpora.
-- `benchmarks/` is an independent Gleam project that consumes `btc_parser`
-  through its public API. `benchmarks/src/btc_parser_benchmarks/transaction/`
-  and `benchmarks/src/btc_parser_benchmarks/block/` contain domain-specific
-  workloads and builders; `benchmarks/src/btc_parser_benchmarks/suite.gleam`
+- `benchmarks/` is an independent Gleam project that consumes `bitcoin_wire`
+  through its public API. `benchmarks/src/bitcoin_wire_benchmarks/transaction/`
+  and `benchmarks/src/bitcoin_wire_benchmarks/block/` contain domain-specific
+  workloads and builders; `benchmarks/src/bitcoin_wire_benchmarks/suite.gleam`
   combines their canonical registries, resolves domain and nested selectors
   such as `transaction.deserialize` and `block.compute-merkle-root`, captures
   metadata once, and runs sections in canonical order.
-  `benchmarks/src/btc_parser_benchmarks/internal/benchmark.gleam` owns shared
+  `benchmarks/src/bitcoin_wire_benchmarks/internal/benchmark.gleam` owns shared
   measurement primitives,
-  `benchmarks/src/btc_parser_benchmarks/internal/bitcoin_wire.gleam` owns the
+  `benchmarks/src/bitcoin_wire_benchmarks/internal/bitcoin_wire.gleam` owns the
   shared CompactSize encoder, and
-  `benchmarks/src/btc_parser_benchmarks/report.gleam` owns domain-neutral
+  `benchmarks/src/bitcoin_wire_benchmarks/report.gleam` owns domain-neutral
   table/CSV reporting. The `bytes` column is the complete serialized size of
   the input value for a row, regardless of its domain.
 - `docs/` documents the public transaction and block APIs and output script
@@ -236,14 +232,14 @@ file/timer/CLI behavior, or a runtime-specific bug.
   `structural_inspection_test.gleam`,
   `validate_context_free_consensus_test.gleam`, and
   `serialization_and_identifiers_test.gleam` under
-  `test/btc_parser/transaction/`; real transaction wire examples are stored in
-  `test/btc_parser/transaction/fixtures/` and exercised by
+  `test/bitcoin_wire/transaction/`; real transaction wire examples are stored in
+  `test/bitcoin_wire/transaction/fixtures/` and exercised by
   `fixture_test.gleam`.
   Block behavior is covered by `deserialize_test.gleam`,
   `deserialize_with_policy_test.gleam`,
   `serialization_and_identifiers_test.gleam`, `compute_merkle_root_test.gleam`,
   `pow_limit_test.gleam`, `validate_context_free_consensus_test.gleam`, and
-  `fixture_test.gleam` under `test/btc_parser/block/`; real mainnet block
+  `fixture_test.gleam` under `test/bitcoin_wire/block/`; real mainnet block
   examples are stored in its `fixtures/` directory.
 - Test both success and exact failure shape for transaction and block
   deserializer changes: error kind, offset, and context stack.
