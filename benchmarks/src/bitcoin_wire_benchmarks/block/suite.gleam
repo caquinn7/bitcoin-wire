@@ -1,12 +1,13 @@
 //// Performance benchmarks for the public `bitcoin_wire/block` workflows.
 ////
 //// The suite measures repeated operations that callers are expected to pay for:
-//// deserialization, block size and weight calculation, Merkle-root
-//// calculation, context-free consensus validation, and serialization. Fixture
-//// loading and hex decoding, synthetic transaction and header construction,
-//// proof-of-work setup and mining, and preflight assertions are intentionally
-//// performed before timing begins. Rows that take parsed blocks are
-//// deserialized during setup; deserialization rows time that work directly.
+//// standalone header operations, block deserialization, block size and weight
+//// calculation, Merkle-root calculation, context-free consensus validation,
+//// and serialization. Fixture loading and hex decoding, synthetic transaction
+//// and header construction, proof-of-work setup and mining, and preflight
+//// assertions are intentionally performed before timing begins. Rows that take
+//// parsed blocks are deserialized during setup; deserialization rows time that
+//// work directly.
 ////
 //// Benchmark cases run one or more logical operations per timed call. Fast
 //// cases use larger batches to reduce timer overhead; slower cases use smaller
@@ -16,7 +17,7 @@
 //// `validate_context_free_consensus` call.
 
 import bitcoin_wire/block.{
-  type Block, type ConsensusViolation, type Parsed, type PowLimit,
+  type Block, type ConsensusViolation, type Header, type Parsed, type PowLimit,
   BaseSizeLimitExceeded, NonMutated, WeightLimitExceeded,
 }
 import bitcoin_wire/hash256
@@ -38,16 +39,24 @@ const mainnet_898064_total_size = 1_576_176
 
 const mainnet_898064_label = "mainnet block=898064 transactions=2450 base_size=805947"
 
+const mainnet_898064_header_label = "mainnet block=898064 header"
+
 const regtest_compact_target = 0x207FFFFF
 
 type PreparedBlock {
   PreparedBlock(bytes: BitArray, parsed_block: Block(Parsed))
 }
 
-/// Returns concrete block benchmark sections in workflow order: deserialize,
-/// size-and-weight, Merkle-root, context-free validation, then serialization.
+type PreparedHeader {
+  PreparedHeader(bytes: BitArray, header: Header)
+}
+
+/// Returns concrete block benchmark sections in workflow order: standalone
+/// header operations, deserialize, size-and-weight, Merkle-root, context-free
+/// validation, then serialization.
 pub fn section_definitions() -> List(PerfSectionDefinition) {
   [
+    PerfSectionDefinition("block.header.fixtures", measure_fixture_header),
     PerfSectionDefinition(
       "block.deserialize.fixtures",
       measure_fixture_block_deserialize,
@@ -96,6 +105,41 @@ pub fn section_definitions() -> List(PerfSectionDefinition) {
 }
 
 // ==============================================================================
+// Standalone headers
+// ============================================================================
+
+fn measure_fixture_header() -> List(PerfCaseResult) {
+  let PreparedHeader(header_bytes, header) = mainnet_898064_prepared_header()
+  let header_size = bit_array.byte_size(header_bytes)
+  let header_bytes_case =
+    PerfCaseInput(mainnet_898064_header_label, header_size, header_bytes)
+  let header_case =
+    PerfCaseInput(mainnet_898064_header_label, header_size, header)
+
+  [
+    measure_cases(
+      [header_bytes_case],
+      measurement_config(1000),
+      "deserialize_header",
+      block.deserialize_header,
+    ),
+    measure_cases(
+      [header_case],
+      measurement_config(1000),
+      "serialize_header",
+      block.serialize_header,
+    ),
+    measure_cases(
+      [header_case],
+      measurement_config(1000),
+      "compute_block_hash",
+      block.compute_block_hash,
+    ),
+  ]
+  |> list.flatten
+}
+
+// ============================================================================
 // Block deserialization
 // ==============================================================================
 
@@ -287,6 +331,7 @@ fn validation_synthetic_transaction_block_case(
 
   let block_hash =
     parsed_block
+    |> block.get_header
     |> block.compute_block_hash
     |> hash256.to_bytes_le
   let assert <<_:bytes-size(31), most_significant_byte>> = block_hash
@@ -370,6 +415,7 @@ fn size_limit_rejection_block_case(
 
   let block_hash =
     parsed_block
+    |> block.get_header
     |> block.compute_block_hash
     |> hash256.to_bytes_le
   let assert <<_:bytes-size(31), most_significant_byte>> = block_hash
@@ -406,6 +452,17 @@ fn measure_synthetic_transaction_block_serialization() -> List(PerfCaseResult) {
 // ==============================================================================
 // Shared fixture setup
 // ==============================================================================
+
+fn mainnet_898064_prepared_header() -> PreparedHeader {
+  let block_bytes = mainnet_898064_block_bytes()
+  let assert Ok(header_bytes) = bit_array.slice(block_bytes, 0, 80)
+  let assert Ok(header) = block.deserialize_header(header_bytes)
+
+  assert bit_array.byte_size(header_bytes) == 80
+  assert block.serialize_header(header) == header_bytes
+
+  PreparedHeader(bytes: header_bytes, header:)
+}
 
 fn mainnet_898064_block_case() -> PerfCaseInput(Block(Parsed)) {
   let block_bytes = mainnet_898064_block_bytes()
@@ -671,6 +728,7 @@ fn mine_regtest_header(merkle_root: BitArray, nonce: Int) -> BitArray {
       let assert Ok(header_block) = block.deserialize(<<header:bits, 0>>)
       let header_hash =
         header_block
+        |> block.get_header
         |> block.compute_block_hash
         |> hash256.to_bytes_le
       let assert <<_:bytes-size(31), most_significant_byte>> = header_hash

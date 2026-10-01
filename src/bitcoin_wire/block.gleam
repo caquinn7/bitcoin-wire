@@ -350,6 +350,34 @@ fn compute_merkle_parents_loop(
 // Error handling
 // ==============================================================================
 
+/// An error that occurred while deserializing a standalone Bitcoin block header.
+///
+/// A standalone header has a fixed 80-byte representation, so the only
+/// possible decoding failure is an input with the wrong bit count.
+pub type HeaderDecodeError {
+  /// The supplied input did not contain exactly 640 bits.
+  ///
+  /// This covers inputs that are too short, too long, or not byte-aligned.
+  /// `actual` is the supplied bit count and `expected` is always `640`.
+  InvalidHeaderBitCount(actual: Int, expected: Int)
+}
+
+/// An error that occurred while deserializing a standalone Bitcoin block header
+/// from hexadecimal.
+///
+/// Distinguishes failures during hex-to-bytes conversion from an otherwise valid
+/// hex string whose decoded bit count is not the fixed header size.
+pub type DeserializeHeaderHexError {
+  /// The hexadecimal string could not be converted to bytes.
+  ///
+  /// This occurs for odd-length strings and strings containing non-hexadecimal
+  /// characters.
+  InvalidHeaderHex
+
+  /// The decoded bytes did not contain exactly one 80-byte block header.
+  HeaderDecodeFailed(HeaderDecodeError)
+}
+
 /// An error that occurred while deserializing a Bitcoin block from hex.
 ///
 /// Distinguishes failures during hex-to-bytes conversion from underlying block
@@ -559,6 +587,52 @@ fn field_error(
 // ==============================================================================
 // Deserialization
 // ==============================================================================
+
+/// Deserialize exactly one Bitcoin block header from its 80-byte wire form.
+///
+/// The supplied `BitArray` must contain exactly 640 bits. Inputs that are too
+/// short, too long, or not byte-aligned return `InvalidHeaderBitCount`.
+///
+/// A successfully decoded header exposes its fixed-width wire fields but has not
+/// had its proof of work, parent relationship, or any chain-level property
+/// validated.
+pub fn deserialize_header(
+  bytes: BitArray,
+) -> Result(Header, HeaderDecodeError) {
+  let header_bit_count = 640
+  let bit_count = bit_array.bit_size(bytes)
+
+  case bit_count == header_bit_count {
+    True -> {
+      // An exact 640-bit input is byte-aligned, and every fixed-width header
+      // field is available to the shared parser.
+      let assert Ok(reader) = reader.new(bytes)
+      let assert Ok(#(_, header)) = parser.run(header_parser(), reader, [])
+      Ok(header)
+    }
+    False ->
+      Error(InvalidHeaderBitCount(actual: bit_count, expected: header_bit_count))
+  }
+}
+
+/// Deserialize exactly one Bitcoin block header from hexadecimal.
+///
+/// Hexadecimal conversion happens before header decoding. Invalid or odd-length
+/// hexadecimal strings return `InvalidHeaderHex`. Valid hexadecimal strings that
+/// do not decode to exactly 80 bytes return `HeaderDecodeFailed`.
+pub fn deserialize_header_hex(
+  hex: String,
+) -> Result(Header, DeserializeHeaderHexError) {
+  use bytes <- result.try(
+    hex
+    |> bit_array.base16_decode
+    |> result.replace_error(InvalidHeaderHex),
+  )
+
+  bytes
+  |> deserialize_header
+  |> result.map_error(HeaderDecodeFailed)
+}
 
 /// Configuration policy for block decoding limits.
 ///
@@ -1252,7 +1326,7 @@ fn validate_proof_of_work(
 
   use _ <- result.try(validate_pow_target_within_limit(target, limit))
 
-  let block_hash = compute_block_hash(block)
+  let block_hash = compute_block_hash(block.header)
   case pow_target.is_satisfied_by(target, block_hash) {
     True -> Ok(Nil)
     False -> Error(InvalidProofOfWork(InsufficientWork))
@@ -1483,21 +1557,25 @@ fn mark_as_context_free_validated(
 // Serialization
 // ==============================================================================
 
-/// Compute the hash that identifies a Bitcoin block.
+/// Compute the hash that identifies a Bitcoin block from its header.
 ///
-/// Returns the double SHA-256 hash of the block's exact 80-byte header. The
-/// transaction count and transactions are not included in this computation.
+/// Returns the double SHA-256 hash of the header's exact 80-byte wire
+/// serialization. The transaction count and transactions are not included in
+/// this computation.
 ///
 /// The returned hash uses the little-endian byte order carried by previous
 /// block hash fields on the Bitcoin wire. This function does not validate the
 /// header's proof of work.
 ///
+/// When starting with a complete block, obtain its header with `get_header`
+/// before calling this function.
+///
 /// ## See Also
 ///
 /// - `serialize_header` — produces the header serialization being hashed
-pub fn compute_block_hash(block: Block(state)) -> Hash256 {
+pub fn compute_block_hash(header: Header) -> Hash256 {
   let hash_bytes =
-    block.header
+    header
     |> serialize_header
     |> double_sha256.hash
 

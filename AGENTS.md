@@ -20,12 +20,13 @@ changes.
   classification, context-free consensus validation, serialization, and
   txid/wtxid computation.
 - `src/bitcoin_wire/block.gleam` defines the public block API and block/header
-  data model. It deserializes complete blocks by decoding a block header,
-  CompactSize transaction count, and contained transaction prefixes; exposes
-  header and transaction accessors; and owns block decode policies and
-  block-level decode errors. It computes block sizes, weights, Merkle roots, and
-  block hashes; serializes headers and complete blocks; and performs documented
-  context-free consensus validation using a caller-supplied proof-of-work limit.
+  data model. It deserializes exact standalone 80-byte headers and complete
+  blocks by decoding a header, CompactSize transaction count, and contained
+  transaction prefixes; exposes header and transaction accessors; and owns
+  block decode policies and block-level decode errors. It computes block sizes,
+  weights, Merkle roots, and header-derived block hashes; serializes headers and
+  complete blocks; and performs documented context-free consensus validation
+  using a caller-supplied proof-of-work limit.
 - `src/bitcoin_wire/hash256.gleam` exposes fixed-width hashes in wire-order
   little-endian bytes for transaction identifiers, block-header hashes, and
   Merkle roots, with raw-byte and conventional display conversions.
@@ -54,14 +55,15 @@ changes.
   `fuzz/src/bitcoin_wire_fuzz/report.gleam` own suite-neutral result data and
   reporting, `fuzz/src/bitcoin_wire_fuzz/transaction/` owns the transaction
   suite and its failure formatter, `fuzz/src/bitcoin_wire_fuzz/block/` owns the
-  block suite and its failure formatter,
+  block suite, including standalone header candidates, and its failure formatter,
   `fuzz/src/bitcoin_wire_fuzz/internal/` contains the RNG and trace utilities, and
   `fuzz/corpus/transaction/` and `fuzz/corpus/block/` contain the respective
   seed corpora.
 - `benchmarks/` is an independent Gleam project that consumes `bitcoin_wire`
   through its public API. `benchmarks/src/bitcoin_wire_benchmarks/transaction/`
   and `benchmarks/src/bitcoin_wire_benchmarks/block/` contain domain-specific
-  workloads and builders; `benchmarks/src/bitcoin_wire_benchmarks/suite.gleam`
+  workloads and builders, including standalone-header fixture rows;
+  `benchmarks/src/bitcoin_wire_benchmarks/suite.gleam`
   combines their canonical registries, resolves domain and nested selectors
   such as `transaction.deserialize` and `block.compute-merkle-root`, captures
   metadata once, and runs sections in canonical order.
@@ -152,8 +154,9 @@ file/timer/CLI behavior, or a runtime-specific bug.
   and its contained transactions to `ContextFreeValidated`. APIs whose
   documented guarantees depend on context-free validation should keep that
   requirement.
-- Public deserializers must consume exactly one value. Extra bytes after a
-  complete block or transaction must return `TrailingBytes`, not be ignored.
+- Public deserializers must consume exactly one value. `deserialize_header`
+  requires exactly 80 bytes; extra bytes after a complete block or transaction
+  must return `TrailingBytes`, not be ignored.
 - CompactSize integers, including block transaction counts, must reject
   non-minimal encodings.
 - Do not pass user-controlled CompactSize-derived values directly into reader

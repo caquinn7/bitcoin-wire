@@ -2,10 +2,10 @@
 
 This directory is a standalone Gleam project containing the `bitcoin_wire`
 benchmark harness. It consumes the library through its public API, combines
-domain suites for transactions and blocks, and is intended to catch broad
-performance regressions in public workflows. Compare trends and relative
-changes within the same machine, target, and runtime. This development-only
-package is not published independently.
+domain suites for transactions, standalone headers, and blocks, and is intended
+to catch broad performance regressions in public workflows. Compare trends and
+relative changes within the same machine, target, and runtime. This
+development-only package is not published independently.
 
 Input construction, hex decoding, and preflight assertions happen before timing
 begins. Timed rows measure only the operation named in the `case` column.
@@ -41,6 +41,12 @@ Run one report section by passing its exact leaf ID as a selector:
 
 ```sh
 ./benchmarks/run -- --section transaction.deserialize.fixtures
+```
+
+For the standalone header rows, select `block.header.fixtures`:
+
+```sh
+./benchmarks/run -- --section block.header.fixtures
 ```
 
 Section selectors are case-sensitive. An exact selector uses a concrete leaf
@@ -356,13 +362,14 @@ are emitted into the serialized transaction.
 
 ## Block
 
-All block rows use a 250 ms warmup and a 1,000 ms measurement duration. The
-`bytes` value is always the complete serialized block size, including for
-base-size and weight rows. Fixture loading and hex decoding, synthetic
-transaction and deterministic-header construction, proof-of-work setup and
-mining, and correctness preflight all happen outside timed regions. Parsing is
-also outside timing for rows that take parsed blocks; deserialize rows time it
-as their named operation.
+All header and block rows use a 250 ms warmup and a 1,000 ms measurement
+duration. The `bytes` value is the complete serialized size of the input value:
+80 for standalone header rows and the complete serialized block size for block
+rows, including base-size and weight rows. Fixture loading and hex decoding,
+synthetic transaction and deterministic-header construction, proof-of-work
+setup and mining, and correctness preflight all happen outside timed regions.
+Parsing is also outside timing for rows that take parsed blocks or headers;
+deserialize rows time it as their named operation.
 
 Every fixture section uses mainnet block 898,064. Its 1,576,176-byte complete
 serialization contains 2,450 transactions—218 legacy and 2,232 SegWit—with a
@@ -370,6 +377,14 @@ base size of 805,947 bytes and a weight of 3,994,017. Before timing, setup
 verifies those values, exact `block.serialize` round-trip bytes, the header
 Merkle root and non-mutated tree, and successful
 `block.validate_context_free_consensus` with the mainnet proof-of-work limit.
+
+### Header
+
+`block.header.fixtures` measures `block.deserialize_header`,
+`block.serialize_header`, and `block.compute_block_hash` over the known 80-byte
+header extracted from the mainnet 898,064 fixture. Fixture loading, header
+extraction, standalone deserialization, and exact header serialization round
+trip occur before timing. Each row uses 1,000 operations per timed call.
 
 ### Deserialize
 
@@ -485,7 +500,7 @@ The results table has these columns:
 
 - `case`: The measured function plus the input shape or fixture label.
 - `bytes`: The complete serialized size of the input value used for the row
-  (a transaction for transaction rows or a block for block rows).
+  (a transaction, standalone header, or block).
 - `warmup ms`: How long the benchmark ran before recording measurements.
 - `duration ms`: The target amount of timed measurement for the row.
 - `ops/call`: The number of logical operations batched inside one timed call.
@@ -495,10 +510,11 @@ The results table has these columns:
 - `us/op`: Estimated microseconds per logical operation.
 
 `ops/s` and `us/op` are normalized back to one logical operation, such as one
-`deserialize`, `compute_base_size`, `compute_total_size`, `compute_weight`,
+`deserialize_header`, `serialize_header`, `compute_block_hash`, `deserialize`,
+`compute_base_size`, `compute_total_size`, `compute_weight`,
 `compute_merkle_root`, `validate_context_free_consensus`, `compute_txid`, or
-`serialize` call. That means rows with different `ops/call` values can still
-be compared.
+`serialize` call. That means rows with different `ops/call` values can still be
+compared.
 
 Table headings and CSV `section` values use canonical concrete leaf section IDs.
 Each is accepted as an exact `--section` selector; group selectors do not appear

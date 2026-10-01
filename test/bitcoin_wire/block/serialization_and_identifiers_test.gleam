@@ -313,6 +313,7 @@ pub fn compute_block_hash_matches_manual_dsha256_test() {
     |> crypto.hash(Sha256, _)
 
   assert block
+    |> block.get_header
     |> block.compute_block_hash
     |> hash256.to_bytes_le
     == expected_hash

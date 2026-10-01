@@ -186,7 +186,10 @@ pub fn validate_context_free_consensus_rejects_header_hash_above_pow_target_test
       0x03000001,
     )
   let assert Ok(parsed_block) = block.deserialize(block_bytes)
-  let block_hash = block.compute_block_hash(parsed_block)
+  let block_hash =
+    parsed_block
+    |> block.get_header
+    |> block.compute_block_hash
   let block_hash_bytes = hash256.to_bytes_le(block_hash)
 
   assert block_hash_bytes != <<0:256>>
