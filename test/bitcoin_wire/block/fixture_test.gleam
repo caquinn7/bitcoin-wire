@@ -250,7 +250,10 @@ fn compare_compute_block_hash_against_known_vector(
     |> string.trim
     |> block.deserialize_hex
 
-  let wire_block_hash = block.compute_block_hash(block)
+  let wire_block_hash =
+    block
+    |> block.get_header
+    |> block.compute_block_hash
 
   assert hash256.to_display_hex(wire_block_hash)
     == expectation.display_block_hash_hex

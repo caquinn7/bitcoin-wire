@@ -2,10 +2,10 @@
 
 ## Overview
 
-The standalone fuzz project exercises the public transaction and block APIs with
-mutated real mainnet wire bytes. Each run selects exactly one suite. Its goal is
-to find unhandled exceptions: malformed input should return a structured
-`Result` error, never crash the process.
+The standalone fuzz project exercises the public transaction, standalone-header,
+and block APIs with mutated real mainnet wire bytes. Each run selects exactly
+one suite. Its goal is to find unhandled exceptions: malformed input should
+return a structured `Result` error, never crash the process.
 
 The harness is a robustness check, not a semantic oracle. It does not require a
 specific decode or validation error for every malformed input, and it does not
@@ -167,25 +167,29 @@ JavaScript with the same Gleam flags used by the fuzz suite:
 ## Block Workflow
 
 Every block run first verifies every original corpus seed once in corpus order.
-Verification requires successful deserialization and context-free consensus
-validation with the mainnet proof-of-work limit, matching transaction count and
-list length, correct size and weight calculations, an 80-byte header, 32-byte
-hash and Merkle-root values, an unmutated matching Merkle root, a matching
-display block hash, and exact reconstruction from the serialized header,
-CompactSize count, and serialized transactions. A verification failure exits
-immediately with the block height, hash, and failure reason; fuzzing does not
-begin and no aggregated fuzz report is produced. This phase neither consumes
-RNG values nor contributes bytes to the trace. It does not verify recorded
-block heights or taxonomy codes.
+Verification requires successful complete-block and standalone-header
+deserialization, context-free consensus validation with the mainnet
+proof-of-work limit, matching transaction count and list length, correct size
+and weight calculations, an 80-byte header, 32-byte hash and Merkle-root values,
+an unmutated matching Merkle root, a matching display block hash, and exact
+reconstruction from the serialized header, CompactSize count, and serialized
+transactions. A verification failure exits immediately with the block height,
+hash, and failure reason; fuzzing does not begin and no aggregated fuzz report
+is produced. This phase neither consumes RNG values nor contributes bytes to the
+trace. It does not verify recorded block heights or taxonomy codes.
 
 After verification, the block suite selects a corpus block, applies one
-mutation, and calls `block.deserialize`. A deserialization error is clean. For
-each successful parse it runs context-free consensus validation with the
-mainnet proof-of-work limit; validation errors are also clean outcomes. It
-exercises every header accessor, transaction count and list accessors, base
-size, total size, weight, virtual size, Merkle-root computation, block hashing,
-header serialization, and complete serialization. `iterations` continues to
-mean randomized mutation iterations only.
+mutation, derives its first up-to-80-byte header candidate, and calls both
+`block.deserialize_header` and `block.deserialize`. A header or block
+deserialization error is clean. For every successful standalone header it
+exercises every accessor, requires exact `serialize_header` round-trip bytes,
+and computes its block hash. For every successful complete block it compares
+the direct header serialization and hash with `get_header` and
+`compute_block_hash`, then runs context-free consensus validation with the
+mainnet proof-of-work limit; validation errors are also clean outcomes. It also
+exercises transaction count and list accessors, base size, total size, weight,
+virtual size, Merkle-root computation, and complete serialization. `iterations`
+continues to mean randomized mutation iterations only.
 
 It requires the recorded transaction count to match the transaction list, the
 complete serialization and total size to match the mutated input, the weight to
@@ -213,6 +217,9 @@ header offsets 72–75, then contained-transaction mutation, count-adjusted
 transaction removal, count-adjusted transaction duplication, and transaction
 swapping. These orders are fixed because they are part of deterministic trace
 replay.
+
+Header candidate extraction adds no mutation strategy and consumes no RNG state,
+so it does not change the mutation registry or deterministic trace selection.
 
 Contained-transaction mutation selects one transaction uniformly and applies
 truncation, byte flips, bit flips, byte insertion, span deletion, span

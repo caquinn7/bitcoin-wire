@@ -18,9 +18,10 @@ The following Bitcoin wire-format data structures are currently implemented:
   serializes legacy and SegWit transactions, exposes their fields and output
   script classifications, computes their base sizes, total sizes, weights, and
   virtual sizes, txids, and wtxids, and runs context-free consensus checks.
-- [`bitcoin_wire/block`](https://github.com/caquinn7/bitcoin-wire/blob/main/docs/block/block.md) deserializes and serializes complete
-  blocks, exposes their headers and transactions, computes their base sizes,
-  total sizes, weights, virtual sizes, Merkle roots, and block hashes, and runs
+- [`bitcoin_wire/block`](https://github.com/caquinn7/bitcoin-wire/blob/main/docs/block/block.md) deserializes and serializes standalone
+  80-byte headers and computes their block hashes. It also deserializes and
+  serializes complete blocks; exposes their headers and transactions; computes
+  base sizes, total sizes, weights, virtual sizes, and Merkle roots; and runs
   context-free consensus checks.
 - `bitcoin_wire/hash256` provides fixed-width wire-order hashes with conversions
   to raw little-endian bytes and conventional Bitcoin display notation.

@@ -21,8 +21,8 @@ blocks while preserving Bitcoin's wire representation.
   context-free consensus rules.
 - **Validation-aware API**: Phantom types distinguish parsed blocks from blocks
   that passed the available context-free consensus checks.
-- **Serialization and identifiers**: Serialize complete blocks or their
-  80-byte headers and compute block hashes.
+- **Serialization and identifiers**: Deserialize and serialize standalone
+  80-byte headers or complete blocks, and compute block hashes from headers.
 
 ## Quick Start
 
@@ -37,6 +37,7 @@ pub fn display_block_hash_from_bytes(
 ) -> Result(String, block.DecodeError) {
   bytes
   |> block.deserialize
+  |> result.map(block.get_header)
   |> result.map(block.compute_block_hash)
   |> result.map(hash256.to_display_hex)
 }
@@ -46,10 +47,59 @@ pub fn block_hash_bytes_from_hex(
 ) -> Result(BitArray, block.DeserializeHexError) {
   hex
   |> block.deserialize_hex
+  |> result.map(block.get_header)
   |> result.map(block.compute_block_hash)
   |> result.map(hash256.to_bytes_le)
 }
 ```
+
+## Standalone Headers
+
+`deserialize_header` accepts exactly one 80-byte (640-bit) block header. It
+returns `InvalidHeaderBitCount` when the input is short, long, or not
+byte-aligned. `deserialize_header_hex` first converts hexadecimal to bytes, so
+malformed or odd-length hexadecimal is distinct from valid hexadecimal whose
+decoded length is not 80 bytes.
+
+Standalone header parsing is structural only: every exact 80-byte sequence has
+the fixed header shape. It does not validate proof of work, select a network,
+or establish that the header belongs to a valid chain.
+
+```gleam
+pub fn reserialize_header(
+  bytes: BitArray,
+) -> Result(BitArray, block.HeaderDecodeError) {
+  bytes
+  |> block.deserialize_header
+  |> result.map(block.serialize_header)
+}
+
+pub fn display_header_hash(
+  hex: String,
+) -> Result(String, block.DeserializeHeaderHexError) {
+  hex
+  |> block.deserialize_header_hex
+  |> result.map(block.compute_block_hash)
+  |> result.map(hash256.to_display_hex)
+}
+```
+
+`compute_block_hash` takes a `Header`, whether it was parsed directly or
+obtained from a complete block with `get_header`. Its returned `Hash256` stays
+in wire-order little-endian bytes. Use `hash256.to_display_hex` only when a
+conventional explorer-style string is needed.
+
+Headers can be compared structurally without reversing bytes:
+
+```gleam
+pub fn child_links_to_parent(parent: block.Header, child: block.Header) -> Bool {
+  block.compute_block_hash(parent)
+  == block.get_header_previous_block_hash(child)
+}
+```
+
+This equality only establishes the encoded parent reference. It is not chain
+validation.
 
 ## Decode Policy
 
@@ -109,12 +159,13 @@ targets, targets above the supplied limit, and insufficient header work.
 
 The module performs whole-value deserialization, structural inspection,
 serialization, hashing, measurement, Merkle-root computation, and documented
-context-free consensus checks. It does not determine the target required by
-preceding headers, evaluate timestamp or transaction-finality rules, enforce
-activation-based rules such as the BIP34 coinbase height or SegWit witness
-commitment, or perform UTXO lookup, script execution, signature verification,
-fee, or subsidy checks. Signet block-solution validation is also outside its
-scope.
+context-free consensus checks. It does not construct headers, determine the
+target required by preceding headers, evaluate timestamp or transaction-finality
+rules, enforce activation-based rules such as the BIP34 coinbase height or
+SegWit witness commitment, or perform UTXO lookup, script execution, signature
+verification, fee, or subsidy checks. Difficulty transitions, accumulated work,
+chain selection, networking, SPV Merkle-proof verification, and Signet
+block-solution validation are also outside its scope.
 
 ## Documentation
 

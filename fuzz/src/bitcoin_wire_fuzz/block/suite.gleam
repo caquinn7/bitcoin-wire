@@ -1,4 +1,4 @@
-//// Fuzz testing harness for the `bitcoin_wire/block` block parser.
+//// Fuzz testing harness for the `bitcoin_wire/block` block and header parsers.
 ////
 //// The harness mutates complete mainnet blocks and exercises block
 //// deserialization and its related public APIs. Any byte input must result in
@@ -31,7 +31,7 @@ pub type IterationFailure {
     /// Hex-encoded mutated block bytes for copying into regression tests.
     mutated_block_hex: String,
     /// Exception rescued while deserializing, validating, inspecting,
-    /// serializing, or hashing the mutated block.
+    /// serializing, or hashing the standalone header candidate or mutated block.
     exception: Exception,
   )
 }
@@ -174,6 +174,11 @@ type PostParseOperations {
   )
 }
 
+/// Results from standalone header APIs exercised for every header candidate.
+type HeaderOperations {
+  HeaderOperations(serialized_header: BitArray, block_hash: Hash256)
+}
+
 /// Runs the block fuzz harness and returns failures plus reproducibility metadata.
 ///
 /// Before mutation iterations, every original seed is verified in corpus order.
@@ -301,9 +306,15 @@ fn run_deserialize(
   selected_mutation: Mutation,
   pow_limit: block.PowLimit,
 ) -> Nil {
+  let header_operations =
+    mutated_block_bytes
+    |> header_candidate
+    |> run_header_deserialize
+
   case block.deserialize(mutated_block_bytes) {
     Ok(parsed_block) -> {
       let operations = run_post_parse_operations(parsed_block, pow_limit)
+      let assert Ok(header_operations) = header_operations
 
       assert operations.transaction_count
         == list.length(operations.transactions)
@@ -314,6 +325,8 @@ fn run_deserialize(
       assert operations.serialized_block == mutated_block_bytes
 
       assert bit_array.byte_size(operations.serialized_header) == 80
+      assert header_operations.serialized_header == operations.serialized_header
+      assert header_operations.block_hash == operations.block_hash
 
       Nil
     }
@@ -347,6 +360,43 @@ fn run_deserialize(
   }
 }
 
+/// Return exactly the header prefix when it is available, or every available
+/// byte for a truncated candidate.
+fn header_candidate(block_bytes: BitArray) -> BitArray {
+  let candidate_size = int.min(bit_array.byte_size(block_bytes), 80)
+  let assert Ok(candidate) = bit_array.slice(block_bytes, 0, candidate_size)
+  candidate
+}
+
+/// Deserialize one standalone header candidate and exercise its public API.
+///
+/// An exact 80-byte candidate must serialize back byte-for-byte. The complete
+/// block parser separately checks the same successful candidate against its
+/// enclosing block's header and hash.
+fn run_header_deserialize(
+  candidate: BitArray,
+) -> Result(HeaderOperations, block.HeaderDecodeError) {
+  candidate
+  |> block.deserialize_header
+  |> result.map(fn(header) {
+    let _ = block.get_header_version(header)
+    let _ = block.get_header_previous_block_hash(header)
+    let _ = block.get_header_merkle_root(header)
+    let _ = block.get_header_timestamp(header)
+    let _ = block.get_header_target(header)
+    let _ = block.get_header_nonce(header)
+
+    let serialized_header = block.serialize_header(header)
+    let block_hash = block.compute_block_hash(header)
+
+    assert serialized_header == candidate
+    assert bit_array.byte_size(serialized_header) == 80
+    assert bit_array.byte_size(hash256.to_bytes_le(block_hash)) == 32
+
+    HeaderOperations(serialized_header:, block_hash:)
+  })
+}
+
 fn run_post_parse_operations(
   parsed_block: Block(block.Parsed),
   pow_limit: block.PowLimit,
@@ -370,7 +420,7 @@ fn run_post_parse_operations(
   let virtual_size = block.compute_virtual_size(parsed_block)
   let serialized_header = block.serialize_header(header)
   let serialized_block = block.serialize(parsed_block)
-  let block_hash = block.compute_block_hash(parsed_block)
+  let block_hash = block.compute_block_hash(header)
   let computed_merkle_root = block.compute_merkle_root(parsed_block)
 
   PostParseOperations(
@@ -423,17 +473,32 @@ fn prepare_seed_block(
   seed_block: SeedBlock,
   pow_limit: block.PowLimit,
 ) -> Result(PreparedSeedBlock, String) {
+  let header_operations =
+    seed_block.bytes
+    |> header_candidate
+    |> run_header_deserialize
+
   case block.deserialize(seed_block.bytes) {
-    Ok(parsed_block) -> {
-      let operations = run_post_parse_operations(parsed_block, pow_limit)
-      prepare_verified_seed_block(seed_block, operations)
-    }
+    Ok(parsed_block) ->
+      case header_operations {
+        Ok(header_operations) -> {
+          let operations = run_post_parse_operations(parsed_block, pow_limit)
+          prepare_verified_seed_block(seed_block, header_operations, operations)
+        }
+        Error(error) ->
+          Error(
+            "standalone header deserialization failed: "
+            <> string.inspect(error),
+          )
+      }
+
     Error(error) -> Error("deserialization failed: " <> string.inspect(error))
   }
 }
 
 fn prepare_verified_seed_block(
   seed_block: SeedBlock,
+  header_operations: HeaderOperations,
   operations: PostParseOperations,
 ) -> Result(PreparedSeedBlock, String) {
   use _ <- result.try(verify_successful_validation(operations.validation))
@@ -460,6 +525,14 @@ fn prepare_verified_seed_block(
   use _ <- result.try(ensure(
     bit_array.byte_size(operations.serialized_header) == 80,
     "serialized header did not contain 80 bytes",
+  ))
+  use _ <- result.try(ensure(
+    header_operations.serialized_header == operations.serialized_header,
+    "standalone header serialization did not match the embedded header serialization",
+  ))
+  use _ <- result.try(ensure(
+    header_operations.block_hash == operations.block_hash,
+    "standalone header hash did not match the embedded header hash",
   ))
   let computed_merkle_root = case operations.computed_merkle_root {
     Mutated(root) | NonMutated(root) -> root

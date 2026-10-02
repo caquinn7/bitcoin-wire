@@ -142,6 +142,7 @@ fn validate_block_example(height_argument: String) -> Result(Json, String) {
     Ok(block_value) -> {
       let computed_block_hash =
         block_value
+        |> block.get_header
         |> block.compute_block_hash
         |> hash256.to_display_hex
 
