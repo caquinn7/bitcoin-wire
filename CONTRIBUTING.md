@@ -4,8 +4,9 @@
 
 Use a [Conventional Commit](https://www.conventionalcommits.org/en/v1.0.0/)
 title for every pull request. The release workflow reads the squash commit
-message on `main`, so the repository must use the pull request title as the
-squash commit title. Scopes are optional and do not change the version bump.
+message on `main`. Configure squash merges to use the pull request title as
+the commit subject and include the branch's commit details in the body.
+Scopes are optional and do not change the version bump.
 
 | Pull request title | Library version change |
 | --- | --- |
@@ -16,10 +17,12 @@ squash commit title. Scopes are optional and do not change the version bump.
 | `docs:`, `test:`, `refactor:`, `chore:`, `ci:`, `build:`, or `style:` | None by itself |
 
 Put `!` in the title for any breaking change, including a breaking refactor.
-The squash commit uses only the pull request title, so a `BREAKING CHANGE:`
-footer in the pull request description will not reach the release workflow.
-If a refactor or dependency change fixes a user-visible defect, use `fix:`
-instead of its internal-work type.
+The default squash message includes commit details, but it does not copy the
+pull request description. A `BREAKING CHANGE:` footer only in that description
+is therefore not reliable release input. Keep the generated commit details
+in the squash body and leave its Conventional Commit subject unchanged. If a
+refactor or dependency change fixes a user-visible defect, use `fix:` instead
+of its internal-work type.
 
 A commit confined to `fuzz/`, `benchmarks/`, or `examples/` does not trigger
 a library release. A commit that also touches the library, its tests, or its
@@ -31,11 +34,14 @@ commits are pending, the highest SemVer bump wins.
 A repository administrator must:
 
 1. Allow squash merging only and set the default squash commit message to
-   **Pull request title**.
+   **Pull request title and commit details**. The title becomes the squash
+   commit subject; the branch's commit details remain in its body.
 2. Require pull requests for `main` and add the
    `conventional PR title` check to its required checks. Keep the existing
    Erlang and JavaScript test checks required. The title check appears after
-   this workflow has run on a pull request.
+   this workflow has run on a pull request. It checks the pull request title;
+   GitHub still allows editing the generated squash subject at merge time, so
+   verify that the subject remains the checked title.
 3. Add a repository secret named `RELEASE_PLEASE_TOKEN` containing a
    fine-grained token restricted to this repository, with **Contents**,
    **Pull requests**, and **Issues** read/write permissions. This token lets
