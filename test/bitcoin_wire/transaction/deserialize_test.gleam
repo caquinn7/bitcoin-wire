@@ -1,5 +1,4 @@
 import bitcoin_wire/hash256
-import bitcoin_wire/internal/fixed_int/shared_inputs
 import bitcoin_wire/transaction.{
   DecodeFailed, InsufficientBytes, IntegerOutOfRange, InvalidHex,
   InvalidSegwitMarkerFlag, NonByteAlignedInput, NonMinimalCompactSize,
@@ -871,7 +870,20 @@ pub fn deserialize_preserves_empty_scriptpubkey_test() {
 }
 
 pub fn deserialize_checks_output_values_at_safe_integer_boundaries_test() {
-  list.each(shared_inputs.signed_safe_integer_boundaries, fn(boundary) {
+  let boundaries = [
+    #(<<0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0x1F, 0>>, "9007199254740991", True),
+    #(<<0x01, 0, 0, 0, 0, 0, 0xE0, 0xFF>>, "-9007199254740991", True),
+    #(<<0, 0, 0, 0, 0, 0, 0x20, 0>>, "9007199254740992", False),
+    #(<<0, 0, 0, 0, 0, 0, 0xE0, 0xFF>>, "-9007199254740992", False),
+    #(<<0x01, 0, 0, 0, 0, 0, 0x20, 0>>, "9007199254740993", False),
+    #(
+      <<0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xDF, 0xFF>>,
+      "-9007199254740993",
+      False,
+    ),
+  ]
+
+  list.each(boundaries, fn(boundary) {
     let #(value_bytes, decimal, is_safe_on_javascript) = boundary
     let bytes = <<
       bitcoin_wire.transaction_version_1_bytes:bits,
@@ -1361,8 +1373,8 @@ type CompactSizeFieldFixture {
 fn check_compact_size_integer_boundaries(field: CompactSizeField) {
   let fixture = compact_size_field_fixture(field)
   let boundaries = [
-    #(shared_inputs.max_safe_js_int_bytes, "9007199254740991", True),
-    #(shared_inputs.max_safe_js_int_plus_one_bytes, "9007199254740992", False),
+    #(<<0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0x1F, 0>>, "9007199254740991", True),
+    #(<<0, 0, 0, 0, 0, 0, 0x20, 0>>, "9007199254740992", False),
     #(
       <<0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF>>,
       "18446744073709551615",
