@@ -1,8 +1,9 @@
 import bitcoin_wire/hash256
 import bitcoin_wire/transaction.{
   DecodeFailed, InsufficientBytes, IntegerOutOfRange, InvalidHex,
-  InvalidSegwitMarkerFlag, NonByteAlignedInput, NonMinimalCompactSize,
-  SuperfluousWitnessRecord, TrailingBytes, UnexpectedEof,
+  InvalidSegwitMarkerFlag, MaxWitnessStackItemCount, NonByteAlignedInput,
+  NonMinimalCompactSize, PolicyLimitExceeded, SuperfluousWitnessRecord,
+  TrailingBytes, UnexpectedEof,
 }
 import gleam/bit_array
 import gleam/int
@@ -1372,6 +1373,7 @@ type CompactSizeFieldFixture {
 
 fn check_compact_size_integer_boundaries(field: CompactSizeField) {
   let fixture = compact_size_field_fixture(field)
+
   let boundaries = [
     #(<<0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0x1F, 0>>, "9007199254740991", True),
     #(<<0, 0, 0, 0, 0, 0, 0x20, 0>>, "9007199254740992", False),
@@ -1381,6 +1383,7 @@ fn check_compact_size_integer_boundaries(field: CompactSizeField) {
       False,
     ),
   ]
+
   let policy =
     transaction.default_decode_policy()
     |> transaction.decode_policy_with_max_witness_stack_item_count(Some(1))
@@ -1389,6 +1392,7 @@ fn check_compact_size_integer_boundaries(field: CompactSizeField) {
     let #(value_bytes, decimal, is_safe_on_javascript) = boundary
     let bytes = <<fixture.prefix:bits, 0xFF, value_bytes:bits, 0:64>>
     let assert Error(error) = transaction.deserialize_with_policy(bytes, policy)
+
     let expected = case target.is_javascript() && !is_safe_on_javascript {
       True -> IntegerOutOfRange(decimal)
       False -> {
@@ -1396,11 +1400,7 @@ fn check_compact_size_integer_boundaries(field: CompactSizeField) {
         case field {
           InputCountField | OutputCountField -> InsufficientBytes(9, 8)
           WitnessItemCountField ->
-            transaction.PolicyLimitExceeded(
-              transaction.MaxWitnessStackItemCount,
-              value,
-              1,
-            )
+            PolicyLimitExceeded(MaxWitnessStackItemCount, value, 1)
           _ -> InsufficientBytes(value, 8)
         }
       }
@@ -1482,12 +1482,14 @@ fn compact_size_field_fixture(
   case field {
     InputCountField ->
       CompactSizeFieldFixture(version, 4, "transaction.inputs.count")
+
     OutputCountField ->
       CompactSizeFieldFixture(
         <<version:bits, input_section:bits>>,
         46,
         "transaction.outputs.count",
       )
+
     ScriptSigLengthField -> {
       // A longer first input lets even a missing second script-length prefix
       // pass the outer two-input feasibility check.
@@ -1499,6 +1501,7 @@ fn compact_size_field_fixture(
         "transaction.inputs[1].script_sig.length",
       )
     }
+
     ScriptPubKeyLengthField -> {
       let first_output = bitcoin_wire.build_output_bytes(<<0:64>>, <<0:72>>)
       CompactSizeFieldFixture(
@@ -1507,12 +1510,14 @@ fn compact_size_field_fixture(
         "transaction.outputs[1].script_pubkey.length",
       )
     }
+
     WitnessItemCountField ->
       CompactSizeFieldFixture(
         segwit_prefix,
         58,
         "transaction.witnesses[0].items.count",
       )
+
     WitnessItemLengthField ->
       CompactSizeFieldFixture(
         <<segwit_prefix:bits, 1>>,

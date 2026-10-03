@@ -1,7 +1,7 @@
 import bitcoin_wire/transaction.{
-  DecodeFailed, InsufficientBytes, MaxInputCount, MaxOutputCount, MaxScriptSize,
-  MaxTransactionSize, MaxWitnessStackItemCount, MaxWitnessStackPayloadSize,
-  NonByteAlignedInput, PolicyLimitExceeded,
+  type DecodePolicy, DecodeFailed, InsufficientBytes, MaxInputCount,
+  MaxOutputCount, MaxScriptSize, MaxTransactionSize, MaxWitnessStackItemCount,
+  MaxWitnessStackPayloadSize, NonByteAlignedInput, PolicyLimitExceeded,
 }
 import gleam/bit_array
 import gleam/int
@@ -837,6 +837,7 @@ pub fn decode_policy_restores_optional_witness_item_limit_to_none_test() {
   let policy =
     policy_with_max_witness_stack_item_count(0)
     |> transaction.decode_policy_with_max_witness_stack_item_count(None)
+
   assert transaction.decode_policy_max_witness_stack_item_count(policy) == None
 
   let bytes = bitcoin_wire.build_minimal_segwit_transaction_bytes()
@@ -848,6 +849,7 @@ pub fn decode_policy_restores_optional_witness_payload_limit_to_none_test() {
   let policy =
     policy_with_max_witness_stack_payload_size(0)
     |> transaction.decode_policy_with_max_witness_stack_payload_size(None)
+
   assert transaction.decode_policy_max_witness_stack_payload_size(policy)
     == None
 
@@ -864,7 +866,7 @@ pub fn decode_policy_restores_optional_witness_payload_limit_to_none_test() {
 // Witness fixture and policy helpers
 // ============================================================================
 
-fn check_large_zero_length_witness_stack(policy: transaction.DecodePolicy) {
+fn check_large_zero_length_witness_stack(policy: DecodePolicy) {
   // 60 stripped bytes + 2 marker/flag bytes + 5 count bytes + one byte per item.
   let item_count = 399_933
   let stack = <<
@@ -898,7 +900,7 @@ fn build_two_input_witness_transaction(stacks: List(BitArray)) -> BitArray {
   )
 }
 
-fn policy_with_two_item_witness_limits() -> transaction.DecodePolicy {
+fn policy_with_two_item_witness_limits() -> DecodePolicy {
   policy_with_max_witness_stack_item_count(2)
   |> transaction.decode_policy_with_max_witness_stack_payload_size(Some(2))
 }
