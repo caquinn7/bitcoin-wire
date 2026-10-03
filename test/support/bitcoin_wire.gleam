@@ -122,6 +122,17 @@ pub fn build_minimal_segwit_transaction_bytes() -> BitArray {
   )
 }
 
+/// Build one witness stack from its item payloads, including all length prefixes.
+pub fn build_witness_stack_bytes(items: List(BitArray)) -> BitArray {
+  let item_count = compact_size(list.length(items))
+  let fragments =
+    list.flat_map(items, fn(item) {
+      [compact_size(bit_array.byte_size(item)), item]
+    })
+
+  bit_array.concat([item_count, ..fragments])
+}
+
 /// Assemble SegWit transaction bytes from encoded components without validating them.
 pub fn assemble_segwit_transaction_bytes(
   inputs: List(BitArray),

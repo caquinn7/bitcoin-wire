@@ -1,7 +1,7 @@
 import bitcoin_wire/transaction.{
-  DecodeFailed, InsufficientBytes, MaxInputCount, MaxOutputCount, MaxScriptSize,
-  MaxTransactionSize, MaxWitnessStackItemCount, MaxWitnessStackPayloadSize,
-  NonByteAlignedInput, PolicyLimitExceeded,
+  type DecodePolicy, DecodeFailed, InsufficientBytes, MaxInputCount,
+  MaxOutputCount, MaxScriptSize, MaxTransactionSize, MaxWitnessStackItemCount,
+  MaxWitnessStackPayloadSize, NonByteAlignedInput, PolicyLimitExceeded,
 }
 import gleam/bit_array
 import gleam/int
@@ -233,11 +233,11 @@ pub fn deserialize_with_policy_rejects_input_count_exceeding_max_input_count_tes
 }
 
 pub fn deserialize_with_policy_prioritizes_structural_input_count_error_test() {
-  // Only two inputs can fit, making structural feasibility the active limit.
+  // The claimed count exceeds both structural feasibility and the policy.
 
   let available_input_count = 2
   let input_count = available_input_count + 1
-  let non_limiting_max_input_count = input_count
+  let max_input_count = available_input_count
   let input_padding = <<
     0:little-size({
       available_input_count * bitcoin_wire.min_input_size_bytes * 8
@@ -251,7 +251,7 @@ pub fn deserialize_with_policy_prioritizes_structural_input_count_error_test() {
         bitcoin_wire.compact_size(input_count):bits,
         input_padding:bits,
       >>,
-      policy_with_max_input_count(non_limiting_max_input_count),
+      policy_with_max_input_count(max_input_count),
     )
 
   assert decode_assertions.check_transaction_decode_error(
@@ -350,11 +350,11 @@ pub fn deserialize_with_policy_rejects_output_count_exceeding_max_output_count_t
 }
 
 pub fn deserialize_with_policy_prioritizes_structural_output_count_error_test() {
-  // Only two outputs can fit, making structural feasibility the active limit.
+  // The claimed count exceeds both structural feasibility and the policy.
 
   let available_output_count = 2
   let output_count = available_output_count + 1
-  let non_limiting_max_output_count = output_count
+  let max_output_count = available_output_count
   let output1 = bitcoin_wire.build_output_bytes(<<0:little-size(64)>>, <<>>)
   let output2 = bitcoin_wire.build_output_bytes(<<0:little-size(64)>>, <<>>)
 
@@ -367,7 +367,7 @@ pub fn deserialize_with_policy_prioritizes_structural_output_count_error_test() 
         output1:bits,
         output2:bits,
       >>,
-      policy_with_max_output_count(non_limiting_max_output_count),
+      policy_with_max_output_count(max_output_count),
     )
 
   assert decode_assertions.check_transaction_decode_error(
@@ -524,6 +524,50 @@ pub fn deserialize_with_policy_accepts_scriptpubkey_at_max_script_size_test() {
     |> transaction.get_raw_script_bytes
 
   assert bit_array.byte_size(actual_script_pubkey_bytes) == max_script_size
+}
+
+pub fn deserialize_with_policy_prioritizes_structural_scriptsig_length_error_test() {
+  let bytes = <<
+    bitcoin_wire.transaction_version_1_bytes:bits,
+    1,
+    0:256,
+    0:32,
+    100,
+    0:80,
+  >>
+  let policy =
+    transaction.default_decode_policy()
+    |> transaction.decode_policy_with_max_script_size(9)
+  let assert Error(error) = transaction.deserialize_with_policy(bytes, policy)
+
+  assert decode_assertions.check_transaction_decode_error(
+      error,
+      41,
+      "transaction.inputs[0].script_sig.length",
+    )
+    == InsufficientBytes(100, 10)
+}
+
+pub fn deserialize_with_policy_prioritizes_structural_scriptpubkey_length_error_test() {
+  let bytes = <<
+    bitcoin_wire.transaction_version_1_bytes:bits,
+    bitcoin_wire.build_minimal_input_section_bytes():bits,
+    1,
+    1000:64-little,
+    100,
+    0:80,
+  >>
+  let policy =
+    transaction.default_decode_policy()
+    |> transaction.decode_policy_with_max_script_size(9)
+  let assert Error(error) = transaction.deserialize_with_policy(bytes, policy)
+
+  assert decode_assertions.check_transaction_decode_error(
+      error,
+      55,
+      "transaction.outputs[0].script_pubkey.length",
+    )
+    == InsufficientBytes(100, 10)
 }
 
 // ============================================================================
@@ -690,8 +734,182 @@ pub fn deserialize_with_policy_rejects_witness_stack_exceeding_max_payload_size_
 }
 
 // ============================================================================
-// Policy Builder Helpers
+// Large witness stacks and per-input policy semantics
 // ============================================================================
+
+pub fn deserialize_accepts_zero_length_witness_items_at_default_tx_size_without_stack_overflow_test() {
+  check_large_zero_length_witness_stack(transaction.default_decode_policy())
+}
+
+pub fn deserialize_with_policy_tracks_zero_length_witness_items_at_default_tx_size_without_stack_overflow_test() {
+  check_large_zero_length_witness_stack(
+    policy_with_max_witness_stack_payload_size(0),
+  )
+}
+
+pub fn deserialize_with_policy_applies_witness_limits_per_input_test() {
+  let bytes =
+    build_two_input_witness_transaction([
+      bitcoin_wire.build_witness_stack_bytes([<<0xAA>>, <<0xBB>>]),
+      bitcoin_wire.build_witness_stack_bytes([<<0xCC>>, <<0xDD>>]),
+    ])
+  let assert Ok(tx) =
+    transaction.deserialize_with_policy(
+      bytes,
+      policy_with_two_item_witness_limits(),
+    )
+
+  let assert Ok([first, second]) = transaction.get_witnesses(tx)
+  assert witness_payloads(first) == [<<0xAA>>, <<0xBB>>]
+  assert witness_payloads(second) == [<<0xCC>>, <<0xDD>>]
+  assert transaction.serialize(tx) == bytes
+}
+
+pub fn deserialize_with_policy_rejects_only_second_witness_stack_over_item_limit_test() {
+  let bytes =
+    build_two_input_witness_transaction([
+      bitcoin_wire.build_witness_stack_bytes([<<0xAA>>, <<0xBB>>]),
+      bitcoin_wire.build_witness_stack_bytes([<<0xCC>>, <<0xDD>>, <<>>]),
+    ])
+  let assert Error(error) =
+    transaction.deserialize_with_policy(
+      bytes,
+      policy_with_two_item_witness_limits(),
+    )
+
+  assert decode_assertions.check_transaction_decode_error(
+      error,
+      104,
+      "transaction.witnesses[1].items.count",
+    )
+    == PolicyLimitExceeded(MaxWitnessStackItemCount, 3, 2)
+}
+
+pub fn deserialize_with_policy_rejects_only_second_witness_stack_over_payload_limit_test() {
+  let bytes =
+    build_two_input_witness_transaction([
+      bitcoin_wire.build_witness_stack_bytes([<<0xAA>>, <<0xBB>>]),
+      bitcoin_wire.build_witness_stack_bytes([<<0xCC>>, <<0xDD, 0xEE>>]),
+    ])
+  let assert Error(error) =
+    transaction.deserialize_with_policy(
+      bytes,
+      policy_with_two_item_witness_limits(),
+    )
+
+  assert decode_assertions.check_transaction_decode_error(
+      error,
+      107,
+      "transaction.witnesses[1].items[1]",
+    )
+    == PolicyLimitExceeded(MaxWitnessStackPayloadSize, 3, 2)
+}
+
+pub fn deserialize_with_policy_accepts_zero_length_item_at_zero_payload_limit_test() {
+  let bytes = bitcoin_wire.build_minimal_segwit_transaction_bytes()
+  let assert Ok(tx) =
+    transaction.deserialize_with_policy(
+      bytes,
+      policy_with_max_witness_stack_payload_size(0),
+    )
+
+  let assert Ok([stack]) = transaction.get_witnesses(tx)
+  assert witness_payloads(stack) == [<<>>]
+  assert transaction.serialize(tx) == bytes
+}
+
+pub fn deserialize_with_policy_counts_zero_length_item_against_zero_item_limit_test() {
+  let bytes = bitcoin_wire.build_minimal_segwit_transaction_bytes()
+  let policy =
+    policy_with_max_witness_stack_item_count(0)
+    |> transaction.decode_policy_with_max_witness_stack_payload_size(Some(0))
+  let assert Error(error) = transaction.deserialize_with_policy(bytes, policy)
+
+  assert decode_assertions.check_transaction_decode_error(
+      error,
+      58,
+      "transaction.witnesses[0].items.count",
+    )
+    == PolicyLimitExceeded(MaxWitnessStackItemCount, 1, 0)
+}
+
+pub fn decode_policy_restores_optional_witness_item_limit_to_none_test() {
+  let policy =
+    policy_with_max_witness_stack_item_count(0)
+    |> transaction.decode_policy_with_max_witness_stack_item_count(None)
+
+  assert transaction.decode_policy_max_witness_stack_item_count(policy) == None
+
+  let bytes = bitcoin_wire.build_minimal_segwit_transaction_bytes()
+  let assert Ok(tx) = transaction.deserialize_with_policy(bytes, policy)
+  assert transaction.serialize(tx) == bytes
+}
+
+pub fn decode_policy_restores_optional_witness_payload_limit_to_none_test() {
+  let policy =
+    policy_with_max_witness_stack_payload_size(0)
+    |> transaction.decode_policy_with_max_witness_stack_payload_size(None)
+
+  assert transaction.decode_policy_max_witness_stack_payload_size(policy)
+    == None
+
+  let bytes =
+    build_two_input_witness_transaction([
+      bitcoin_wire.build_witness_stack_bytes([<<0xAA>>]),
+      bitcoin_wire.build_witness_stack_bytes([<<0xBB>>]),
+    ])
+  let assert Ok(tx) = transaction.deserialize_with_policy(bytes, policy)
+  assert transaction.serialize(tx) == bytes
+}
+
+// ============================================================================
+// Witness fixture and policy helpers
+// ============================================================================
+
+fn check_large_zero_length_witness_stack(policy: DecodePolicy) {
+  // 60 stripped bytes + 2 marker/flag bytes + 5 count bytes + one byte per item.
+  let item_count = 399_933
+  let stack = <<
+    bitcoin_wire.compact_size(item_count):bits,
+    0:size({ item_count * 8 }),
+  >>
+  let bytes =
+    bitcoin_wire.assemble_segwit_transaction_bytes(
+      [bitcoin_wire.build_input_bytes(<<0:size(256)>>, 0, <<>>, 0)],
+      [bitcoin_wire.build_output_bytes(<<0:64>>, <<>>)],
+      [stack],
+    )
+
+  assert bit_array.byte_size(bytes) == 400_000
+  let assert Ok(tx) = transaction.deserialize_with_policy(bytes, policy)
+  let assert Ok([stack]) = transaction.get_witnesses(tx)
+  assert list.length(transaction.get_witness_items(stack)) == item_count
+  assert transaction.compute_base_size(tx) == 60
+  assert transaction.compute_total_size(tx) == 400_000
+  assert transaction.serialize(tx) == bytes
+}
+
+fn build_two_input_witness_transaction(stacks: List(BitArray)) -> BitArray {
+  bitcoin_wire.assemble_segwit_transaction_bytes(
+    [
+      bitcoin_wire.build_input_bytes(<<1:256>>, 0, <<>>, 0),
+      bitcoin_wire.build_input_bytes(<<2:256>>, 0, <<>>, 0),
+    ],
+    [bitcoin_wire.build_output_bytes(<<1000:64-little>>, <<>>)],
+    stacks,
+  )
+}
+
+fn policy_with_two_item_witness_limits() -> DecodePolicy {
+  policy_with_max_witness_stack_item_count(2)
+  |> transaction.decode_policy_with_max_witness_stack_payload_size(Some(2))
+}
+
+fn witness_payloads(stack: transaction.WitnessStack) -> List(BitArray) {
+  stack
+  |> transaction.get_witness_items
+  |> list.map(transaction.get_witness_item_bytes)
+}
 
 fn policy_with_max_tx_size(max_tx_size: Int) {
   transaction.default_decode_policy()

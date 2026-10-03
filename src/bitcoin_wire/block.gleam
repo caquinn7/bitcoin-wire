@@ -1296,7 +1296,7 @@ pub fn validate_context_free_consensus(
 
   let violations = list.append(block_violations, tx_violations)
   case violations {
-    [] -> Ok(mark_as_context_free_validated(block, validated_txs))
+    [] -> Ok(Block(..block, transactions: validated_txs))
     _ -> Error(violations)
   }
 }
@@ -1542,15 +1542,6 @@ fn validate_transactions(
     })
 
   #(list.reverse(violations), list.reverse(validated_txs))
-}
-
-fn mark_as_context_free_validated(
-  block: Block(Parsed),
-  validated_txs: List(Transaction(ContextFreeValidated)),
-) -> Block(ContextFreeValidated) {
-  let Block(header:, transaction_count:, ..) = block
-
-  Block(header:, transaction_count:, transactions: validated_txs)
 }
 
 // ==============================================================================

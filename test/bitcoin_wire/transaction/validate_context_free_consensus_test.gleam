@@ -247,6 +247,36 @@ pub fn validate_context_free_consensus_rejects_coinbase_with_multiple_inputs_tes
     == Error([CoinbaseWithMultipleInputs])
 }
 
+pub fn validate_context_free_consensus_rejects_null_outpoint_only_at_second_input_test() {
+  check_null_outpoint_after_regular_inputs([
+    bitcoin_wire.build_input_bytes(<<1:256>>, 0, <<>>, 0),
+  ])
+}
+
+pub fn validate_context_free_consensus_rejects_null_outpoint_only_at_third_input_test() {
+  check_null_outpoint_after_regular_inputs([
+    bitcoin_wire.build_input_bytes(<<1:256>>, 0, <<>>, 0),
+    bitcoin_wire.build_input_bytes(<<2:256>>, 0, <<>>, 0),
+  ])
+}
+
+fn check_null_outpoint_after_regular_inputs(inputs: List(BitArray)) {
+  let null_input =
+    bitcoin_wire.build_input_bytes(<<0:256>>, 0xFFFFFFFF, <<0, 0>>, 0)
+  let bytes = <<
+    bitcoin_wire.transaction_version_1_bytes:bits,
+    bitcoin_wire.compact_size(list.length(inputs) + 1):bits,
+    bit_array.concat(inputs):bits,
+    null_input:bits,
+    bitcoin_wire.build_minimal_output_section_bytes():bits,
+    0:32-little,
+  >>
+  let assert Ok(tx) = transaction.deserialize(bytes)
+
+  assert transaction.validate_context_free_consensus(tx)
+    == Error([CoinbaseWithMultipleInputs])
+}
+
 pub fn validate_context_free_consensus_rejects_multiple_coinbase_inputs_test() {
   let input_count = bitcoin_wire.compact_size(2)
 

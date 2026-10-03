@@ -394,6 +394,70 @@ pub fn deserialize_with_policy_ignores_contained_transaction_max_tx_size_test() 
   assert block.get_transaction_count(decoded_block) == 1
 }
 
+pub fn deserialize_with_policy_accepts_second_segwit_transaction_at_witness_item_limit_test() {
+  let bytes = build_block_with_second_witness_stack([<<>>, <<>>])
+  let assert Ok(decoded_block) =
+    block.deserialize_with_policy(bytes, policy_with_two_item_witness_limits())
+
+  assert block.get_transaction_count(decoded_block) == 2
+  assert block.serialize(decoded_block) == bytes
+}
+
+pub fn deserialize_with_policy_wraps_second_segwit_transaction_witness_item_limit_error_test() {
+  let bytes = build_block_with_second_witness_stack([<<>>, <<>>, <<>>])
+  let assert Error(error) =
+    block.deserialize_with_policy(bytes, policy_with_two_item_witness_limits())
+  let assert TransactionDecodeFailed(tx_error) =
+    decode_assertions.check_block_decode_error(
+      error,
+      203,
+      "block.transactions[1]",
+    )
+
+  assert decode_assertions.check_transaction_decode_error(
+      tx_error,
+      58,
+      "transaction.witnesses[0].items.count",
+    )
+    == transaction.PolicyLimitExceeded(
+      transaction.MaxWitnessStackItemCount,
+      3,
+      2,
+    )
+}
+
+pub fn deserialize_with_policy_accepts_second_segwit_transaction_at_witness_payload_limit_test() {
+  let bytes = build_block_with_second_witness_stack([<<0xAA>>, <<0xBB>>])
+  let assert Ok(decoded_block) =
+    block.deserialize_with_policy(bytes, policy_with_two_item_witness_limits())
+
+  assert block.get_transaction_count(decoded_block) == 2
+  assert block.serialize(decoded_block) == bytes
+}
+
+pub fn deserialize_with_policy_wraps_second_segwit_transaction_witness_payload_limit_error_test() {
+  let bytes = build_block_with_second_witness_stack([<<0xAA>>, <<0xBB, 0xCC>>])
+  let assert Error(error) =
+    block.deserialize_with_policy(bytes, policy_with_two_item_witness_limits())
+  let assert TransactionDecodeFailed(tx_error) =
+    decode_assertions.check_block_decode_error(
+      error,
+      206,
+      "block.transactions[1]",
+    )
+
+  assert decode_assertions.check_transaction_decode_error(
+      tx_error,
+      61,
+      "transaction.witnesses[0].items[1]",
+    )
+    == transaction.PolicyLimitExceeded(
+      transaction.MaxWitnessStackPayloadSize,
+      3,
+      2,
+    )
+}
+
 // ============================================================================
 // deserialize_hex_with_policy
 // ============================================================================
@@ -443,6 +507,30 @@ pub fn deserialize_hex_with_policy_wraps_policy_limit_error_test() {
 // ============================================================================
 // Helpers
 // ============================================================================
+
+fn build_block_with_second_witness_stack(items: List(BitArray)) -> BitArray {
+  let first_tx = bitcoin_wire.build_minimal_segwit_transaction_bytes()
+  assert bit_array.byte_size(first_tx) == 64
+  let second_tx =
+    bitcoin_wire.assemble_segwit_transaction_bytes(
+      [bitcoin_wire.build_input_bytes(<<1:256>>, 0, <<>>, 0)],
+      [bitcoin_wire.build_output_bytes(<<1000:64-little>>, <<>>)],
+      [bitcoin_wire.build_witness_stack_bytes(items)],
+    )
+
+  // An 80-byte header and one count byte put the second transaction at 145.
+  bitcoin_wire.assemble_block_bytes(<<0:640>>, [first_tx, second_tx])
+}
+
+fn policy_with_two_item_witness_limits() -> block.DecodePolicy {
+  let tx_policy =
+    transaction.default_decode_policy()
+    |> transaction.decode_policy_with_max_witness_stack_item_count(Some(2))
+    |> transaction.decode_policy_with_max_witness_stack_payload_size(Some(2))
+
+  block.default_decode_policy()
+  |> block.decode_policy_with_transaction_policy(tx_policy)
+}
 
 fn build_transaction_with_script_sig_size(script_size: Int) -> BitArray {
   let script_sig = <<0:size({ script_size * 8 })>>
