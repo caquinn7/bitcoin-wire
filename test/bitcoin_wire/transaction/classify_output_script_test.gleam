@@ -35,6 +35,46 @@ pub fn classify_output_script_p2pk_uncompressed_test() {
   check_output_script_classification(script_bytes, P2PK)
 }
 
+pub fn classify_output_script_p2pkh_near_misses_are_unrecognized_test() {
+  let hash = bitcoin_wire.repeat_byte(0xAA, 20)
+  check_unrecognized_scripts([
+    <<0x76, 0xA9, 0x14, hash:bits, 0x88, 0xAC, 0x00>>,
+    <<0x76, 0xA9, 0x14, bitcoin_wire.repeat_byte(0xAA, 19):bits, 0x88, 0xAC>>,
+    <<0x76, 0xA9, 0x14, hash:bits, 0x88, 0xAD>>,
+    <<0x76, 0xA9, 0x4C, 0x14, hash:bits, 0x88, 0xAC>>,
+  ])
+}
+
+pub fn classify_output_script_p2sh_near_misses_are_unrecognized_test() {
+  let hash = bitcoin_wire.repeat_byte(0xBB, 20)
+  check_unrecognized_scripts([
+    <<0xA9, 0x14, hash:bits, 0x87, 0x00>>,
+    <<0xA9, 0x14, bitcoin_wire.repeat_byte(0xBB, 19):bits, 0x87>>,
+    <<0xA9, 0x14, hash:bits, 0x88>>,
+    <<0xA9, 0x4C, 0x14, hash:bits, 0x87>>,
+  ])
+}
+
+pub fn classify_output_script_compressed_p2pk_near_misses_are_unrecognized_test() {
+  let pubkey = bitcoin_wire.repeat_byte(0x02, 33)
+  check_unrecognized_scripts([
+    <<0x21, pubkey:bits, 0xAC, 0x00>>,
+    <<0x21, bitcoin_wire.repeat_byte(0x02, 32):bits, 0xAC>>,
+    <<0x21, pubkey:bits, 0xAD>>,
+    <<0x4C, 0x21, pubkey:bits, 0xAC>>,
+  ])
+}
+
+pub fn classify_output_script_uncompressed_p2pk_near_misses_are_unrecognized_test() {
+  let pubkey = bitcoin_wire.repeat_byte(0x04, 65)
+  check_unrecognized_scripts([
+    <<0x41, pubkey:bits, 0xAC, 0x00>>,
+    <<0x41, bitcoin_wire.repeat_byte(0x04, 64):bits, 0xAC>>,
+    <<0x41, pubkey:bits, 0xAD>>,
+    <<0x4C, 0x41, pubkey:bits, 0xAC>>,
+  ])
+}
+
 // ============================================================================
 // Null-data
 // ============================================================================
@@ -52,6 +92,12 @@ pub fn classify_output_script_nulldata_empty_test() {
 pub fn classify_output_script_nulldata_op_reserved_is_null_data_test() {
   let script_bytes = <<0x6A, 0x50>>
   check_output_script_classification(script_bytes, NullData)
+}
+
+pub fn classify_output_script_nulldata_accepts_small_value_push_opcodes_test() {
+  list.each([0x00, 0x4F, 0x51, 0x60], fn(opcode) {
+    check_output_script_classification(<<0x6A, opcode>>, NullData)
+  })
 }
 
 pub fn classify_output_script_nulldata_non_push_is_unrecognized_test() {
@@ -179,11 +225,15 @@ pub fn classify_output_script_bare_multisig_rejects_21st_key_push_test() {
 pub fn classify_output_script_bare_multisig_accepts_all_key_push_encodings_test() {
   let keys = [
     key_push(1, 33, 0x00),
+    key_push(1, 65, 0x01),
+    key_push(2, 33, 0x10),
     key_push(2, 65, 0x11),
     key_push(3, 33, 0x22),
+    key_push(3, 65, 0x23),
+    key_push(4, 33, 0x32),
     key_push(4, 65, 0x33),
   ]
-  let script_bytes = build_multisig_script(2, keys, 4)
+  let script_bytes = build_multisig_script(2, keys, 8)
 
   check_output_script_classification(script_bytes, BareMultisig)
 }
@@ -348,6 +398,22 @@ pub fn classify_output_script_p2a_test() {
   check_output_script_classification(script_bytes, P2A)
 }
 
+pub fn classify_output_script_named_witness_programs_with_trailing_opcode_are_unrecognized_test() {
+  check_unrecognized_scripts([
+    <<0x00, 0x14, bitcoin_wire.repeat_byte(0xCC, 20):bits, 0x00>>,
+    <<0x00, 0x20, bitcoin_wire.repeat_byte(0xDD, 32):bits, 0x00>>,
+    <<0x51, 0x20, bitcoin_wire.repeat_byte(0xEE, 32):bits, 0x00>>,
+    <<0x51, 0x02, 0x4E, 0x73, 0x00>>,
+  ])
+}
+
+pub fn classify_output_script_witness_v1_31_byte_program_remains_other_witness_program_test() {
+  check_output_script_classification(
+    <<0x51, 0x1F, bitcoin_wire.repeat_byte(0xEE, 31):bits>>,
+    OtherWitnessProgram(version: 1),
+  )
+}
+
 pub fn classify_output_script_truncated_p2a_is_unrecognized_test() {
   let script_bytes = <<0x51, 0x02, 0x4E>>
   check_output_script_classification(script_bytes, Unrecognized)
@@ -481,6 +547,10 @@ fn check_output_script_classification(
     |> output_script_from_bytes
     |> transaction.classify_output_script
     == expected
+}
+
+fn check_unrecognized_scripts(scripts: List(BitArray)) -> Nil {
+  list.each(scripts, check_output_script_classification(_, Unrecognized))
 }
 
 /// Build a minimally encoded bare multisig script ending in
