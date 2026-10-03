@@ -279,8 +279,8 @@ file/timer/CLI behavior, or a runtime-specific bug.
 
 - Enforce cheap size/count limits before allocating or recursing over large
   collections.
-- Preserve fail-fast behavior for impossible counts, oversized scripts, oversized
-  witness stacks, and cumulative witness payload limits.
+- Preserve fail-fast behavior for impossible lengths/counts and configured
+  transaction and block size/count limits.
 - Avoid conversions that lose precision on JavaScript. Keep 64-bit and 256-bit
   values as byte-backed wrappers until a safe conversion is proven.
 - Treat immutable `BitArray` construction as a whole-value cost. In serialization

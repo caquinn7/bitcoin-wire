@@ -16,7 +16,6 @@ type TestError {
   InputRemaining(remaining: Int, offset: Int, context: List(TestContext))
   WrongContext(List(TestContext))
   WrongOffset(Int)
-  LimitExceeded(total: Int, start_offset: Int, context: List(TestContext))
   MappedReadFailure(start_offset: Int, context: List(TestContext))
 }
 
@@ -257,89 +256,4 @@ pub fn indexed_repeat_stops_before_later_items_after_an_error_test() {
 
   let assert Ok(reader) = reader.new(<<>>)
   assert parser.run(parser, reader, [Outer]) == Error(FirstFailure)
-}
-
-// indexed_repeat_with_limit
-
-pub fn indexed_repeat_with_limit_reports_item_start_offset_and_context_test() {
-  let item_parser = fn(reader, _) {
-    case reader.read_u8(reader) {
-      Ok(#(next_reader, value)) -> Ok(#(next_reader, #(value, 2)))
-      Error(_) -> Error(ByteReadFailed)
-    }
-  }
-
-  let parser =
-    parser.indexed_repeat_with_limit(
-      2,
-      item_parser,
-      AtIndex,
-      3,
-      fn(total, start_offset, context) {
-        LimitExceeded(total:, start_offset:, context:)
-      },
-    )
-
-  let assert Ok(source_reader) = reader.new(<<0x00, 0x01, 0x02>>)
-  let assert Ok(#(advanced_reader, _)) = reader.read_u8(source_reader)
-
-  assert parser.run(parser, advanced_reader, [Outer])
-    == Error(
-      LimitExceeded(total: 4, start_offset: 2, context: [AtIndex(1), Outer]),
-    )
-}
-
-pub fn indexed_repeat_with_limit_stops_before_later_items_after_an_error_test() {
-  let item_parser = fn(_, context) {
-    case context {
-      [AtIndex(0), ..] -> Error(FirstFailure)
-      [AtIndex(_), ..] -> Error(LaterItemWasInvoked)
-      _ -> Error(WrongContext(context))
-    }
-  }
-
-  let parser =
-    parser.indexed_repeat_with_limit(
-      2,
-      item_parser,
-      AtIndex,
-      10,
-      fn(total, start_offset, context) {
-        LimitExceeded(total:, start_offset:, context:)
-      },
-    )
-
-  let assert Ok(reader) = reader.new(<<>>)
-  assert parser.run(parser, reader, [Outer]) == Error(FirstFailure)
-}
-
-pub fn indexed_repeat_with_limit_stops_before_later_items_after_limit_test() {
-  let item_parser = fn(reader, context) {
-    case context {
-      [AtIndex(2), ..] -> Error(LaterItemWasInvoked)
-      [AtIndex(_), ..] ->
-        case reader.read_u8(reader) {
-          Ok(#(next_reader, value)) -> Ok(#(next_reader, #(value, 2)))
-          Error(_) -> Error(ByteReadFailed)
-        }
-      _ -> Error(WrongContext(context))
-    }
-  }
-
-  let parser =
-    parser.indexed_repeat_with_limit(
-      3,
-      item_parser,
-      AtIndex,
-      3,
-      fn(total, start_offset, context) {
-        LimitExceeded(total:, start_offset:, context:)
-      },
-    )
-
-  let assert Ok(reader) = reader.new(<<0x00, 0x01, 0x02>>)
-  assert parser.run(parser, reader, [Outer])
-    == Error(
-      LimitExceeded(total: 4, start_offset: 1, context: [AtIndex(1), Outer]),
-    )
 }

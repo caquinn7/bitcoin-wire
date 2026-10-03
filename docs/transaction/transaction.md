@@ -57,6 +57,41 @@ the same little-endian order used on the Bitcoin wire. Use
 `hash256.to_display_hex` for conventional explorer notation or
 `hash256.to_bytes_le` for the exact 32 wire-order bytes.
 
+## Decode Policy
+
+`deserialize` and `deserialize_hex` apply these defaults:
+
+| Limit | Default |
+| --- | ---: |
+| Serialized transaction size | 400,000 bytes |
+| Input count | 100,000 |
+| Output count | 100,000 |
+
+Use `default_decode_policy` and the `decode_policy_with_*` builders to customize
+them:
+
+```gleam
+let policy =
+  transaction.default_decode_policy()
+  |> transaction.decode_policy_with_max_tx_size(1_000_000)
+  |> transaction.decode_policy_with_max_input_count(5_000)
+
+let result = transaction.deserialize_with_policy(transaction_bytes, policy)
+```
+
+The size limit applies to the complete input buffer before decoding. Input and
+output count limits are checked before their collections are decoded, after
+checking whether the counts can fit in the remaining bytes. Script lengths,
+witness item counts, and witness item lengths must also fit the remaining input.
+
+When transactions are decoded inside a block, the block's serialized-size limit
+provides the byte envelope and `max_tx_size` is ignored. Each contained
+transaction still uses its configured input and output count limits.
+
+These limits constrain decoding resources, not consensus validity. A parsed
+transaction has not passed script execution or context-free consensus checks,
+and a strict custom policy can reject consensus-valid transactions.
+
 ## Scope
 
 The module performs whole-value deserialization, structural inspection,

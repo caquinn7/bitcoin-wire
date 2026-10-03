@@ -278,8 +278,9 @@ transaction has already been processed. These rows are meant to catch expensive
 late-failure paths and ensure truncation checks stay precise.
 
 `transaction.deserialize.policy-limits` measures policy-limit rejection before unnecessary
-payload work. This should remain cheap even when the serialized input includes
-large payload bytes.
+payload work. Its oversized-transaction row includes a complete SegWit
+transaction with a large witness payload and checks rejection at the default
+400,000-byte input-buffer limit before decoding begins.
 
 ### Inspection
 

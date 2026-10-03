@@ -106,13 +106,14 @@ validation.
 Block decoding applies the limit configured by
 `block.decode_policy_with_max_block_size` to the complete block byte envelope
 and uses the configured transaction policy for every contained transaction. For
-example, a caller can allow larger scripts while keeping the block limits at
-their defaults:
+example, a caller can restrict each transaction's input and output counts while
+keeping the block limits at their defaults:
 
 ```gleam
 let transaction_policy =
   transaction.default_decode_policy()
-  |> transaction.decode_policy_with_max_script_size(20_000)
+  |> transaction.decode_policy_with_max_input_count(5_000)
+  |> transaction.decode_policy_with_max_output_count(10_000)
 
 let policy =
   block.default_decode_policy()
