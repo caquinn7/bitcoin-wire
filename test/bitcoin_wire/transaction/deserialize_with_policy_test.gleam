@@ -233,11 +233,11 @@ pub fn deserialize_with_policy_rejects_input_count_exceeding_max_input_count_tes
 }
 
 pub fn deserialize_with_policy_prioritizes_structural_input_count_error_test() {
-  // Only two inputs can fit, making structural feasibility the active limit.
+  // The claimed count exceeds both structural feasibility and the policy.
 
   let available_input_count = 2
   let input_count = available_input_count + 1
-  let non_limiting_max_input_count = input_count
+  let max_input_count = available_input_count
   let input_padding = <<
     0:little-size({
       available_input_count * bitcoin_wire.min_input_size_bytes * 8
@@ -251,7 +251,7 @@ pub fn deserialize_with_policy_prioritizes_structural_input_count_error_test() {
         bitcoin_wire.compact_size(input_count):bits,
         input_padding:bits,
       >>,
-      policy_with_max_input_count(non_limiting_max_input_count),
+      policy_with_max_input_count(max_input_count),
     )
 
   assert decode_assertions.check_transaction_decode_error(
@@ -350,11 +350,11 @@ pub fn deserialize_with_policy_rejects_output_count_exceeding_max_output_count_t
 }
 
 pub fn deserialize_with_policy_prioritizes_structural_output_count_error_test() {
-  // Only two outputs can fit, making structural feasibility the active limit.
+  // The claimed count exceeds both structural feasibility and the policy.
 
   let available_output_count = 2
   let output_count = available_output_count + 1
-  let non_limiting_max_output_count = output_count
+  let max_output_count = available_output_count
   let output1 = bitcoin_wire.build_output_bytes(<<0:little-size(64)>>, <<>>)
   let output2 = bitcoin_wire.build_output_bytes(<<0:little-size(64)>>, <<>>)
 
@@ -367,7 +367,7 @@ pub fn deserialize_with_policy_prioritizes_structural_output_count_error_test() 
         output1:bits,
         output2:bits,
       >>,
-      policy_with_max_output_count(non_limiting_max_output_count),
+      policy_with_max_output_count(max_output_count),
     )
 
   assert decode_assertions.check_transaction_decode_error(
@@ -524,6 +524,50 @@ pub fn deserialize_with_policy_accepts_scriptpubkey_at_max_script_size_test() {
     |> transaction.get_raw_script_bytes
 
   assert bit_array.byte_size(actual_script_pubkey_bytes) == max_script_size
+}
+
+pub fn deserialize_with_policy_prioritizes_structural_scriptsig_length_error_test() {
+  let bytes = <<
+    bitcoin_wire.transaction_version_1_bytes:bits,
+    1,
+    0:256,
+    0:32,
+    100,
+    0:80,
+  >>
+  let policy =
+    transaction.default_decode_policy()
+    |> transaction.decode_policy_with_max_script_size(9)
+  let assert Error(error) = transaction.deserialize_with_policy(bytes, policy)
+
+  assert decode_assertions.check_transaction_decode_error(
+      error,
+      41,
+      "transaction.inputs[0].script_sig.length",
+    )
+    == InsufficientBytes(100, 10)
+}
+
+pub fn deserialize_with_policy_prioritizes_structural_scriptpubkey_length_error_test() {
+  let bytes = <<
+    bitcoin_wire.transaction_version_1_bytes:bits,
+    bitcoin_wire.build_minimal_input_section_bytes():bits,
+    1,
+    1000:64-little,
+    100,
+    0:80,
+  >>
+  let policy =
+    transaction.default_decode_policy()
+    |> transaction.decode_policy_with_max_script_size(9)
+  let assert Error(error) = transaction.deserialize_with_policy(bytes, policy)
+
+  assert decode_assertions.check_transaction_decode_error(
+      error,
+      55,
+      "transaction.outputs[0].script_pubkey.length",
+    )
+    == InsufficientBytes(100, 10)
 }
 
 // ============================================================================

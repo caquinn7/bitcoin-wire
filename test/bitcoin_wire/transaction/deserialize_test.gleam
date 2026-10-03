@@ -1313,6 +1313,38 @@ pub fn deserialize_checks_compact_size_integer_boundaries_at_witness_item_length
   check_compact_size_integer_boundaries(WitnessItemLengthField)
 }
 
+pub fn deserialize_rejects_non_minimal_compact_size_at_input_count_test() {
+  check_non_minimal_compact_size(InputCountField)
+}
+
+pub fn deserialize_rejects_non_minimal_compact_size_at_output_count_test() {
+  check_non_minimal_compact_size(OutputCountField)
+}
+
+pub fn deserialize_rejects_non_minimal_compact_size_at_scriptsig_length_test() {
+  check_non_minimal_compact_size(ScriptSigLengthField)
+}
+
+pub fn deserialize_rejects_non_minimal_compact_size_at_scriptpubkey_length_test() {
+  check_non_minimal_compact_size(ScriptPubKeyLengthField)
+}
+
+pub fn deserialize_reports_every_truncated_compact_size_at_input_count_test() {
+  check_truncated_compact_size(InputCountField)
+}
+
+pub fn deserialize_reports_every_truncated_compact_size_at_output_count_test() {
+  check_truncated_compact_size(OutputCountField)
+}
+
+pub fn deserialize_reports_every_truncated_compact_size_at_scriptsig_length_test() {
+  check_truncated_compact_size(ScriptSigLengthField)
+}
+
+pub fn deserialize_reports_every_truncated_compact_size_at_scriptpubkey_length_test() {
+  check_truncated_compact_size(ScriptPubKeyLengthField)
+}
+
 type CompactSizeField {
   InputCountField
   OutputCountField
@@ -1368,6 +1400,56 @@ fn check_compact_size_integer_boundaries(field: CompactSizeField) {
         fixture.path,
       )
       == expected
+  })
+}
+
+fn check_non_minimal_compact_size(field: CompactSizeField) {
+  let fixture = compact_size_field_fixture(field)
+  let encodings = [
+    #(<<0xFD, 0xFC, 0>>, NonMinimalCompactSize(3, 252)),
+    #(<<0xFE, 0xFF, 0xFF, 0, 0>>, NonMinimalCompactSize(5, 65_535)),
+    #(
+      <<0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0, 0, 0, 0>>,
+      NonMinimalCompactSize(9, 4_294_967_295),
+    ),
+  ]
+
+  list.each(encodings, fn(encoding) {
+    let #(encoded, expected) = encoding
+    let assert Error(error) =
+      transaction.deserialize(<<fixture.prefix:bits, encoded:bits>>)
+    assert decode_assertions.check_transaction_decode_error(
+        error,
+        fixture.offset,
+        fixture.path,
+      )
+      == expected
+  })
+}
+
+fn check_truncated_compact_size(field: CompactSizeField) {
+  let fixture = compact_size_field_fixture(field)
+  let assert Error(error) = transaction.deserialize(fixture.prefix)
+  assert decode_assertions.check_transaction_decode_error(
+      error,
+      fixture.offset,
+      fixture.path,
+    )
+    == UnexpectedEof(1, 0)
+
+  list.each([#(0xFD, 2), #(0xFE, 4), #(0xFF, 8)], fn(encoding) {
+    let #(prefix, required) = encoding
+    int.range(0, required, with: Nil, run: fn(_, remaining) {
+      // End the complete input here so following fields cannot supply payload.
+      let bytes = <<fixture.prefix:bits, prefix, 0:size({ remaining * 8 })>>
+      let assert Error(error) = transaction.deserialize(bytes)
+      assert decode_assertions.check_transaction_decode_error(
+          error,
+          fixture.offset,
+          fixture.path,
+        )
+        == UnexpectedEof(required, remaining)
+    })
   })
 }
 
