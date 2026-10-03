@@ -80,6 +80,56 @@ pub fn compute_merkle_root_for_three_unique_transactions_pads_without_mutation_t
 // Mutation flag
 // ============================================================================
 
+pub fn compute_merkle_root_marks_equal_txids_with_different_witnesses_as_mutated_test() {
+  let input = bitcoin_wire.build_input_bytes(<<1:256>>, 0, <<>>, 0)
+  let output = bitcoin_wire.build_output_bytes(<<1000:64-little>>, <<>>)
+  let tx_a_bytes =
+    bitcoin_wire.assemble_segwit_transaction_bytes([input], [output], [
+      bitcoin_wire.build_witness_stack_bytes([<<0xAA>>]),
+    ])
+  let tx_b_bytes =
+    bitcoin_wire.assemble_segwit_transaction_bytes([input], [output], [
+      bitcoin_wire.build_witness_stack_bytes([<<0xBB>>]),
+    ])
+  let assert Ok(tx_a) = transaction.deserialize(tx_a_bytes)
+  let assert Ok(tx_b) = transaction.deserialize(tx_b_bytes)
+
+  assert transaction.serialize_stripped(tx_a)
+    == transaction.serialize_stripped(tx_b)
+  assert transaction.compute_txid(tx_a) == transaction.compute_txid(tx_b)
+  assert transaction.compute_wtxid(tx_a) != transaction.compute_wtxid(tx_b)
+
+  let txid = tx_a |> transaction.compute_txid |> hash256.to_bytes_le
+  let expected_root = dsha256(bit_array.append(txid, txid))
+  let parsed_block = deserialize_zero_header_block([tx_a_bytes, tx_b_bytes])
+  assert_mutated_merkle_root(parsed_block, expected_root)
+}
+
+pub fn compute_merkle_root_does_not_mark_non_adjacent_repeated_txids_as_mutated_test() {
+  let tx_a_bytes = bitcoin_wire.build_minimal_legacy_transaction_bytes(1)
+  let tx_b_bytes = bitcoin_wire.build_minimal_legacy_transaction_bytes(2)
+  let tx_c_bytes = bitcoin_wire.build_minimal_legacy_transaction_bytes(3)
+  let txid_a = compute_txid(tx_a_bytes)
+  let txid_b = compute_txid(tx_b_bytes)
+  let txid_c = compute_txid(tx_c_bytes)
+  assert txid_a != txid_b
+  assert txid_a != txid_c
+  assert txid_b != txid_c
+
+  let pair_ab = dsha256(bit_array.append(txid_a, txid_b))
+  let pair_ac = dsha256(bit_array.append(txid_a, txid_c))
+  let expected_root = dsha256(bit_array.append(pair_ab, pair_ac))
+  let parsed_block =
+    deserialize_zero_header_block([
+      tx_a_bytes,
+      tx_b_bytes,
+      tx_a_bytes,
+      tx_c_bytes,
+    ])
+
+  assert_non_mutated_merkle_root(parsed_block, expected_root)
+}
+
 pub fn compute_merkle_root_marks_an_actual_identical_leaf_pair_as_mutated_test() {
   let tx_a_bytes = bitcoin_wire.build_minimal_legacy_transaction_bytes(1)
   let txid_a = compute_txid(tx_a_bytes)
