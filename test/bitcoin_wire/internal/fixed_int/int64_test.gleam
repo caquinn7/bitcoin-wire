@@ -1,5 +1,7 @@
 import bitcoin_wire/internal/fixed_int/int64.{InvalidBitCount}
 import bitcoin_wire/internal/fixed_int/shared_inputs
+import gleam/int
+import gleam/list
 import support/offset_bit_array
 import support/target
 
@@ -106,6 +108,31 @@ pub fn to_int_negative_power_of_two_test() {
 }
 
 // to_string
+
+pub fn to_int_checks_safe_integer_boundaries_with_aligned_and_offset_bytes_test() {
+  list.each(shared_inputs.signed_safe_integer_boundaries, fn(boundary) {
+    let #(bytes, decimal, is_safe_on_javascript) = boundary
+    list.each([bytes, offset_bit_array.with_one_bit_offset(bytes)], fn(view) {
+      let assert Ok(value) = int64.from_bytes_le(view)
+      let expected = case target.is_javascript() && !is_safe_on_javascript {
+        True -> Error(Nil)
+        False -> int.parse(decimal)
+      }
+
+      assert int64.to_int(value) == expected
+    })
+  })
+}
+
+pub fn to_string_preserves_safe_integer_boundaries_with_aligned_and_offset_bytes_test() {
+  list.each(shared_inputs.signed_safe_integer_boundaries, fn(boundary) {
+    let #(bytes, decimal, _) = boundary
+    list.each([bytes, offset_bit_array.with_one_bit_offset(bytes)], fn(view) {
+      let assert Ok(value) = int64.from_bytes_le(view)
+      assert int64.to_string(value) == decimal
+    })
+  })
+}
 
 pub fn to_string_zero_test() {
   let assert Ok(x) = int64.from_bytes_le(shared_inputs.zero_bytes)
