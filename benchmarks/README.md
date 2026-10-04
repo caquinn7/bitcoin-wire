@@ -280,7 +280,9 @@ late-failure paths and ensure truncation checks stay precise.
 `transaction.deserialize.policy-limits` measures policy-limit rejection before unnecessary
 payload work. Its oversized-transaction row includes a complete SegWit
 transaction with a large witness payload and checks rejection at the default
-400,000-byte input-buffer limit before decoding begins.
+400,000-byte input-buffer limit before decoding begins. Its excessive-witness-item
+row stays inside that byte envelope and checks rejection at 100,001 zero-length
+items before any witness items are decoded.
 
 ### Inspection
 

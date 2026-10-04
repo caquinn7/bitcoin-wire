@@ -21,6 +21,7 @@ pub fn default_decode_policy_returns_expected_values_test() {
   assert transaction.decode_policy_max_tx_size(tx_policy) == 400_000
   assert transaction.decode_policy_max_input_count(tx_policy) == 100_000
   assert transaction.decode_policy_max_output_count(tx_policy) == 100_000
+  assert transaction.decode_policy_max_witness_item_count(tx_policy) == 100_000
 }
 
 pub fn decode_policy_builder_overrides_default_limits_test() {
@@ -39,6 +40,7 @@ pub fn decode_policy_builder_replaces_transaction_policy_without_changing_block_
     |> transaction.decode_policy_with_max_tx_size(8)
     |> transaction.decode_policy_with_max_input_count(6)
     |> transaction.decode_policy_with_max_output_count(7)
+    |> transaction.decode_policy_with_max_witness_item_count(9)
 
   let policy =
     block.default_decode_policy()
@@ -53,6 +55,7 @@ pub fn decode_policy_builder_replaces_transaction_policy_without_changing_block_
   assert transaction.decode_policy_max_tx_size(actual_tx_policy) == 8
   assert transaction.decode_policy_max_input_count(actual_tx_policy) == 6
   assert transaction.decode_policy_max_output_count(actual_tx_policy) == 7
+  assert transaction.decode_policy_max_witness_item_count(actual_tx_policy) == 9
 }
 
 // ============================================================================
@@ -201,7 +204,7 @@ pub fn deserialize_with_policy_accepts_tx_count_at_max_tx_count_test() {
   assert list.length(block.get_transactions(block)) == 2
 }
 
-pub fn deserialize_accepts_default_max_tx_count_without_stack_overflow_test() {
+pub fn deserialize_accepts_default_max_tx_count_without_call_stack_overflow_test() {
   let policy = block.default_decode_policy()
   let tx_count = block.decode_policy_max_tx_count(policy)
   let header =

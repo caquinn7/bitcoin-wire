@@ -106,14 +106,15 @@ validation.
 Block decoding applies the limit configured by
 `block.decode_policy_with_max_block_size` to the complete block byte envelope
 and uses the configured transaction policy for every contained transaction. For
-example, a caller can restrict each transaction's input and output counts while
-keeping the block limits at their defaults:
+example, a caller can restrict each transaction's input, output, and total witness
+item counts while keeping the block limits at their defaults:
 
 ```gleam
 let transaction_policy =
   transaction.default_decode_policy()
   |> transaction.decode_policy_with_max_input_count(5_000)
   |> transaction.decode_policy_with_max_output_count(10_000)
+  |> transaction.decode_policy_with_max_witness_item_count(50_000)
 
 let policy =
   block.default_decode_policy()
@@ -125,6 +126,8 @@ let result = block.deserialize_with_policy(block_bytes, policy)
 The limit configured by `transaction.decode_policy_with_max_tx_size` is ignored
 for contained transactions. The block's maximum serialized size remains the
 only byte-envelope limit for the block and its transactions.
+The input, output, and total witness item count limits apply separately to each
+transaction.
 
 Previous-block hashes, Merkle roots, and computed block hashes are exposed as
 `Hash256` values in the same little-endian order used on the Bitcoin wire. Use

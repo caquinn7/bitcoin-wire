@@ -102,6 +102,7 @@ fn transaction_decode_policy_limit(
     transaction.MaxTransactionSize -> "max_transaction_size"
     transaction.MaxInputCount -> "max_input_count"
     transaction.MaxOutputCount -> "max_output_count"
+    transaction.MaxWitnessItemCount -> "max_witness_item_count"
   }
 }
 

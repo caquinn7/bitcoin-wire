@@ -1230,6 +1230,13 @@ pub type DecodePolicyLimit {
 
   /// The maximum number of transaction outputs was exceeded.
   MaxOutputCount
+
+  /// The maximum total number of witness items across all input stacks was exceeded.
+  ///
+  /// In `PolicyLimitExceeded`, `value` is the cumulative item count through the
+  /// current stack, including zero-length items. The error points to that
+  /// stack's item-count field, before any of its items are decoded.
+  MaxWitnessItemCount
 }
 
 /// Internal breadcrumbs used to build public decode error paths.
@@ -1383,8 +1390,8 @@ fn field_error(
 /// decoding fails with `PolicyLimitExceeded`.
 ///
 /// The limits complement one another: transaction size bounds the complete
-/// input buffer, while input and output count limits can impose tighter bounds as
-/// the transaction is decoded. See the corresponding
+/// input buffer, while input, output, and total witness item count limits bound
+/// collection sizes as the transaction is decoded. See the corresponding
 /// `decode_policy_with_*` functions for enforcement details.
 ///
 /// Builder functions do not validate whether custom limits are useful for
@@ -1405,6 +1412,8 @@ pub opaque type DecodePolicy {
     max_input_count: Int,
     /// Maximum decoded output count.
     max_output_count: Int,
+    /// Maximum total witness item count across all input stacks.
+    max_witness_item_count: Int,
   )
 }
 
@@ -1417,12 +1426,14 @@ pub opaque type DecodePolicy {
 /// some valid Bitcoin transactions may be rejected by this configuration.
 /// 
 /// By default, whole-value decoding accepts serialized transactions up to
-/// 400,000 bytes and input and output counts up to 100,000 each.
+/// 400,000 bytes, input and output counts up to 100,000 each, and up to 100,000
+/// witness items in total across all input stacks, including zero-length items.
 pub fn default_decode_policy() -> DecodePolicy {
   DecodePolicy(
     max_tx_size: 400_000,
     max_input_count: 100_000,
     max_output_count: 100_000,
+    max_witness_item_count: 100_000,
   )
 }
 
@@ -1465,6 +1476,19 @@ pub fn decode_policy_with_max_output_count(
   DecodePolicy(..policy, max_output_count:)
 }
 
+/// Return a policy with a custom maximum total witness item count.
+///
+/// This limit counts items across all input stacks in one transaction, including
+/// zero-length items. After each stack's count has been checked against the bytes
+/// remaining, its contribution to the cumulative count is checked before any of
+/// its items are decoded. Empty stacks contribute zero items.
+pub fn decode_policy_with_max_witness_item_count(
+  policy: DecodePolicy,
+  max_witness_item_count: Int,
+) -> DecodePolicy {
+  DecodePolicy(..policy, max_witness_item_count:)
+}
+
 /// Get the maximum serialized transaction size.
 pub fn decode_policy_max_tx_size(policy: DecodePolicy) -> Int {
   policy.max_tx_size
@@ -1480,6 +1504,11 @@ pub fn decode_policy_max_output_count(policy: DecodePolicy) -> Int {
   policy.max_output_count
 }
 
+/// Get the maximum total witness item count across all input stacks.
+pub fn decode_policy_max_witness_item_count(policy: DecodePolicy) -> Int {
+  policy.max_witness_item_count
+}
+
 /// Deserialize a Bitcoin transaction from its canonical Bitcoin wire-format
 /// serialization.
 ///
@@ -1488,7 +1517,8 @@ pub fn decode_policy_max_output_count(policy: DecodePolicy) -> Int {
 /// exactly one transaction; trailing bytes are rejected.
 ///
 /// This function applies `default_decode_policy` to protect against malicious inputs
-/// by enforcing limits on transaction size and input/output counts.
+/// by enforcing limits on transaction size, input/output counts, and total
+/// witness item count.
 /// 
 /// For custom resource limits, use `deserialize_with_policy` instead.
 ///
@@ -1658,6 +1688,7 @@ fn tx_body_parser(
   use witnesses <- parser.then(witnesses_if_segwit_parser(
     is_segwit,
     input_count,
+    policy.max_witness_item_count,
   ))
   use lock_time <- parser.then(field_parser(LockTime, reader.read_u32_le))
 
@@ -2075,11 +2106,12 @@ fn validate_script_length(
 fn witnesses_if_segwit_parser(
   is_segwit: Bool,
   input_count: Int,
+  max_witness_item_count_policy: Int,
 ) -> Parser(ParseContext, Option(List(WitnessStack)), DecodeError) {
   case is_segwit {
     True ->
       input_count
-      |> witnesses_parser
+      |> witnesses_parser(max_witness_item_count_policy)
       |> parser.map(Some)
 
     False -> parser.return(None)
@@ -2088,11 +2120,24 @@ fn witnesses_if_segwit_parser(
 
 fn witnesses_parser(
   input_count: Int,
+  max_witness_item_count_policy: Int,
 ) -> Parser(ParseContext, List(WitnessStack), DecodeError) {
-  input_count
-  |> parser.indexed_repeat(witness_parser(), AtWitnessStack)
-  |> parser.try_with_start_offset(fn(witnesses, start_offset, _reader, ctx) {
-    case list.all(witnesses, is_witness_stack_empty) {
+  let parse_stacks = fn(reader, ctx) {
+    witnesses_loop(
+      0,
+      input_count,
+      max_witness_item_count_policy,
+      reader,
+      ctx,
+      0,
+      [],
+    )
+  }
+
+  parse_stacks
+  |> parser.try_with_start_offset(fn(parsed, start_offset, _reader, ctx) {
+    let #(witnesses, total_item_count) = parsed
+    case total_item_count == 0 {
       True ->
         SuperfluousWitnessRecord
         |> new_decode_error(start_offset)
@@ -2104,7 +2149,43 @@ fn witnesses_parser(
   })
 }
 
-fn witness_parser() -> Parser(ParseContext, WitnessStack, DecodeError) {
+fn witnesses_loop(
+  index: Int,
+  input_count: Int,
+  max_witness_item_count_policy: Int,
+  reader: Reader,
+  ctx: List(ParseContext),
+  total_item_count: Int,
+  witnesses: List(WitnessStack),
+) -> Result(#(Reader, #(List(WitnessStack), Int)), DecodeError) {
+  case index >= input_count {
+    True -> Ok(#(reader, #(list.reverse(witnesses), total_item_count)))
+
+    False -> {
+      let parse_stack =
+        witness_parser(total_item_count, max_witness_item_count_policy)
+
+      case parser.run(parse_stack, reader, [AtWitnessStack(index), ..ctx]) {
+        Ok(#(reader, #(stack, total_item_count))) ->
+          witnesses_loop(
+            index + 1,
+            input_count,
+            max_witness_item_count_policy,
+            reader,
+            ctx,
+            total_item_count,
+            [stack, ..witnesses],
+          )
+        Error(error) -> Error(error)
+      }
+    }
+  }
+}
+
+fn witness_parser(
+  total_item_count: Int,
+  max_witness_item_count: Int,
+) -> Parser(ParseContext, #(WitnessStack, Int), DecodeError) {
   // WitnessStack for one input:
   // ├─ item count (CompactSize)
   // ├─ WitnessItem #0
@@ -2113,28 +2194,54 @@ fn witness_parser() -> Parser(ParseContext, WitnessStack, DecodeError) {
   // ├─ WitnessItem #1
   // │    ├─ ...
   // └─ WitnessItem #(item_count - 1)
-  use item_count <- parser.then(witness_item_count_parser())
+  use item_count <- parser.then(witness_item_count_parser(
+    total_item_count,
+    max_witness_item_count,
+  ))
   use items <- parser.then(witness_items_parser(item_count))
-  parser.return(WitnessStack(item_count:, items:))
+  parser.return(#(
+    WitnessStack(item_count:, items:),
+    total_item_count + item_count,
+  ))
 }
 
 /// Construct a parser for a validated witness item count field.
 ///
 /// When run, it parses a CompactSize count, converts it to `Int`, and checks
 /// that at least one length-prefix byte per item can fit in the remaining input.
-fn witness_item_count_parser() -> Parser(ParseContext, Int, DecodeError) {
+/// It then checks the cumulative transaction-wide item count against policy.
+fn witness_item_count_parser(
+  total_item_count: Int,
+  max_witness_item_count: Int,
+) -> Parser(ParseContext, Int, DecodeError) {
   WitnessItemCount
   |> compact_size_int_parser
   |> parser.try_with_start_offset(fn(item_count, start_offset, reader, ctx) {
     let remaining = reader.bytes_remaining(reader)
-    case item_count > remaining {
-      True ->
-        InsufficientBytes(claimed: item_count, remaining:)
-        |> field_error(WitnessItemCount, start_offset, ctx)
-        |> Error
-
-      False -> Ok(item_count)
+    let on_invalid = fn(kind) {
+      kind
+      |> field_error(WitnessItemCount, start_offset, ctx)
+      |> Error
     }
+
+    use <- bool.guard(
+      item_count > remaining,
+      on_invalid(InsufficientBytes(claimed: item_count, remaining:)),
+    )
+
+    // Earlier items each consumed at least one byte, and the current count fits
+    // the remaining bytes, so this sum cannot exceed the input's byte size.
+    let total_item_count = total_item_count + item_count
+    use <- bool.guard(
+      total_item_count > max_witness_item_count,
+      on_invalid(PolicyLimitExceeded(
+        MaxWitnessItemCount,
+        total_item_count,
+        max_witness_item_count,
+      )),
+    )
+
+    Ok(item_count)
   })
 }
 
