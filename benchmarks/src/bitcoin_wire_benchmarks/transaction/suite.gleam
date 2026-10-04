@@ -14,8 +14,8 @@
 
 import bitcoin_wire/transaction.{
   type ContextFreeValidated, type Parsed, type Transaction, DuplicateInput,
-  InsufficientBytes, MaxScriptSize, PolicyLimitExceeded,
-  TotalOutputValueOutOfRange, UnexpectedEof,
+  InsufficientBytes, MaxTransactionSize, MaxWitnessItemCount,
+  PolicyLimitExceeded, TotalOutputValueOutOfRange, UnexpectedEof,
 }
 import bitcoin_wire_benchmarks/internal/benchmark.{
   type MeasurementCurvePoint, type PerfCaseInput, type PerfCaseResult,
@@ -209,9 +209,17 @@ fn measure_synthetic_segwit_input_tx_decoding() -> List(PerfCaseResult) {
 }
 
 fn measure_synthetic_witness_item_tx_decoding() -> List(PerfCaseResult) {
-  measure_synthetic_deserialize_curve(
-    synthetic_witness_item_tx_specs,
-    two_tier_synthetic_curve([1, 100], [1000]),
+  list.append(
+    measure_synthetic_deserialize_curve(
+      synthetic_witness_item_tx_specs,
+      two_tier_synthetic_curve([1, 100], [1000]),
+    ),
+    measure_cases(
+      [max_witness_item_count_deserialize_case()],
+      slow_synthetic_tx_measurement_config(),
+      "deserialize",
+      transaction.deserialize,
+    ),
   )
 }
 
@@ -247,7 +255,10 @@ fn measure_malformed_tx_decoding() -> List(PerfCaseResult) {
 
 fn measure_policy_limit_tx_decoding() -> List(PerfCaseResult) {
   let policy_limit_deserialize_inputs = [
-    oversized_scriptsig_policy_deserialize_case("oversized scriptSig tx"),
+    oversized_transaction_policy_deserialize_case("oversized transaction"),
+    excessive_witness_item_count_deserialize_case(
+      "excessive witness item count",
+    ),
   ]
 
   measure_cases(
@@ -422,31 +433,56 @@ fn drop_last_byte(bytes: BitArray) -> BitArray {
   truncated
 }
 
-fn oversized_scriptsig_policy_deserialize_case(
+fn oversized_transaction_policy_deserialize_case(
   input_label: String,
 ) -> PerfCaseInput(BitArray) {
-  let max_script_size =
+  let max_tx_size =
     transaction.default_decode_policy()
-    |> transaction.decode_policy_max_script_size
+    |> transaction.decode_policy_max_tx_size
 
-  let script_sig_size = max_script_size + 1
-  let script_sig = <<0:size({ script_sig_size * 8 })>>
-
-  // Include the oversized script bytes so this rejects on policy after the
-  // length is decoded, rather than rejecting earlier as truncated input.
-  let tx_bytes = <<
-    1:little-size(32),
-    compact_size(1):bits,
-    0:size(256),
-    0:little-size(32),
-    compact_size(script_sig_size):bits,
-    script_sig:bits,
-    0xFFFFFFFF:little-size(32),
-  >>
-
+  // Construct a complete transaction so the byte envelope is the only failure.
+  let tx_bytes = build_synthetic_segwit_tx(1, 1, 1, max_tx_size)
+  let tx_size = bit_array.byte_size(tx_bytes)
   let assert Error(decode_err) = transaction.deserialize(tx_bytes)
   assert transaction.get_decode_error_kind(decode_err)
-    == PolicyLimitExceeded(MaxScriptSize, script_sig_size, max_script_size)
+    == PolicyLimitExceeded(MaxTransactionSize, tx_size, max_tx_size)
+
+  PerfCaseInput(input_label, tx_size, tx_bytes)
+}
+
+fn max_witness_item_count_deserialize_case() -> PerfCaseInput(BitArray) {
+  let item_count =
+    transaction.default_decode_policy()
+    |> transaction.decode_policy_max_witness_item_count
+  // Empty items reach the collection limit while staying inside the byte limit.
+  let tx_bytes = build_synthetic_segwit_tx(1, 1, item_count, 0)
+  let assert Ok(tx) = transaction.deserialize(tx_bytes)
+  let assert Ok([stack]) = transaction.get_witnesses(tx)
+  assert list.length(transaction.get_witness_items(stack)) == item_count
+
+  PerfCaseInput(
+    "segwit tx empty_witness_items=" <> int.to_string(item_count),
+    bit_array.byte_size(tx_bytes),
+    tx_bytes,
+  )
+}
+
+fn excessive_witness_item_count_deserialize_case(
+  input_label: String,
+) -> PerfCaseInput(BitArray) {
+  let max_item_count =
+    transaction.default_decode_policy()
+    |> transaction.decode_policy_max_witness_item_count
+  let tx_bytes = build_synthetic_segwit_tx(1, 1, max_item_count + 1, 0)
+  let assert Error(decode_err) = transaction.deserialize(tx_bytes)
+  assert transaction.get_decode_error_kind(decode_err)
+    == PolicyLimitExceeded(
+      MaxWitnessItemCount,
+      max_item_count + 1,
+      max_item_count,
+    )
+  assert transaction.get_decode_error_path(decode_err)
+    == "transaction.witnesses[0].items.count"
 
   PerfCaseInput(input_label, bit_array.byte_size(tx_bytes), tx_bytes)
 }

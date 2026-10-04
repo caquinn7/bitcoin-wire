@@ -1,14 +1,12 @@
 import bitcoin_wire/hash256
 import bitcoin_wire/transaction.{
   DecodeFailed, InsufficientBytes, IntegerOutOfRange, InvalidHex,
-  InvalidSegwitMarkerFlag, MaxWitnessStackItemCount, NonByteAlignedInput,
-  NonMinimalCompactSize, PolicyLimitExceeded, SuperfluousWitnessRecord,
-  TrailingBytes, UnexpectedEof,
+  InvalidSegwitMarkerFlag, NonByteAlignedInput, NonMinimalCompactSize,
+  SuperfluousWitnessRecord, TrailingBytes, UnexpectedEof,
 }
 import gleam/bit_array
 import gleam/int
 import gleam/list
-import gleam/option.{Some}
 import support/bitcoin_wire
 import support/decode_assertions
 import support/offset_bit_array
@@ -1227,6 +1225,23 @@ pub fn deserialize_witness_item_length_exceeds_remaining_bytes_test() {
     == InsufficientBytes(claimed: 100, remaining: 14)
 }
 
+pub fn deserialize_rejects_witness_item_count_exceeding_remaining_bytes_test() {
+  let bytes =
+    bitcoin_wire.assemble_segwit_transaction_bytes(
+      [bitcoin_wire.build_input_bytes(<<0:256>>, 0, <<>>, 0)],
+      [bitcoin_wire.build_output_bytes(<<1000:64-little>>, <<>>)],
+      [<<7, 0, 0>>],
+    )
+  let assert Error(error) = transaction.deserialize(bytes)
+
+  assert decode_assertions.check_transaction_decode_error(
+      error,
+      58,
+      "transaction.witnesses[0].items.count",
+    )
+    == InsufficientBytes(7, 6)
+}
+
 pub fn deserialize_rejects_non_minimal_witness_item_count_test() {
   let input = bitcoin_wire.build_input_bytes(<<0:size(256)>>, 0, <<>>, 0)
   let output = bitcoin_wire.build_output_bytes(<<1000:little-size(64)>>, <<>>)
@@ -1384,9 +1399,7 @@ fn check_compact_size_integer_boundaries(field: CompactSizeField) {
     ),
   ]
 
-  let policy =
-    transaction.default_decode_policy()
-    |> transaction.decode_policy_with_max_witness_stack_item_count(Some(1))
+  let policy = transaction.default_decode_policy()
 
   list.each(boundaries, fn(boundary) {
     let #(value_bytes, decimal, is_safe_on_javascript) = boundary
@@ -1399,8 +1412,6 @@ fn check_compact_size_integer_boundaries(field: CompactSizeField) {
         let assert Ok(value) = int.parse(decimal)
         case field {
           InputCountField | OutputCountField -> InsufficientBytes(9, 8)
-          WitnessItemCountField ->
-            PolicyLimitExceeded(MaxWitnessStackItemCount, value, 1)
           _ -> InsufficientBytes(value, 8)
         }
       }

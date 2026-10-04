@@ -33,7 +33,7 @@ type InputMetrics {
     max_script_sig_length: Int,
     script_sig_252_count: Int,
     script_sig_253_count: Int,
-    near_policy_script_sig_count: Int,
+    script_sig_9000_to_10000_count: Int,
   )
 }
 
@@ -42,7 +42,7 @@ type OutputMetrics {
     max_script_pubkey_length: Int,
     script_pubkey_252_count: Int,
     script_pubkey_253_count: Int,
-    near_policy_script_pubkey_count: Int,
+    script_pubkey_9000_to_10000_count: Int,
     p2pk_output_count: Int,
     p2pkh_output_count: Int,
     p2sh_output_count: Int,
@@ -216,7 +216,7 @@ fn measure_inputs(inputs: List(transaction.Input)) -> InputMetrics {
         + bool_to_int(script_sig_length == 252),
       script_sig_253_count: metrics.script_sig_253_count
         + bool_to_int(script_sig_length == 253),
-      near_policy_script_sig_count: metrics.near_policy_script_sig_count
+      script_sig_9000_to_10000_count: metrics.script_sig_9000_to_10000_count
         + bool_to_int(script_sig_length >= 9000 && script_sig_length <= 10_000),
     )
   })
@@ -256,7 +256,7 @@ fn measure_output(
         + bool_to_int(script_length == 252),
       script_pubkey_253_count: metrics.script_pubkey_253_count
         + bool_to_int(script_length == 253),
-      near_policy_script_pubkey_count: metrics.near_policy_script_pubkey_count
+      script_pubkey_9000_to_10000_count: metrics.script_pubkey_9000_to_10000_count
         + bool_to_int(script_length >= 9000 && script_length <= 10_000),
       op_return_unrecognized_output_count: metrics.op_return_unrecognized_output_count
         + bool_to_int(op_return_unrecognized),
@@ -399,8 +399,8 @@ fn derive_codes(metrics: Metrics) -> List(String) {
     #(witness.zero_length_item_count > 0, "W02"),
     #(witness.max_item_length >= 65_536, "W03"),
     #(witness.max_stack_item_count >= 253, "W04"),
-    #(input.near_policy_script_sig_count > 0, "L01"),
-    #(output.near_policy_script_pubkey_count > 0, "L02"),
+    #(input.script_sig_9000_to_10000_count > 0, "L01"),
+    #(output.script_pubkey_9000_to_10000_count > 0, "L02"),
     #(output.p2pk_output_count > 0, "F01"),
     #(output.p2pkh_output_count > 0, "F02"),
     #(output.p2sh_output_count > 0, "F03"),
@@ -457,11 +457,11 @@ fn report_header() -> String {
     "max_script_sig_length",
     "script_sig_252_count",
     "script_sig_253_count",
-    "near_policy_script_sig_count",
+    "script_sig_9000_to_10000_count",
     "max_script_pubkey_length",
     "script_pubkey_252_count",
     "script_pubkey_253_count",
-    "near_policy_script_pubkey_count",
+    "script_pubkey_9000_to_10000_count",
     "empty_witness_stack_count",
     "nonempty_witness_stack_count",
     "max_witness_stack_item_count",
@@ -518,11 +518,11 @@ fn render_row(metrics: Metrics) -> String {
     int.to_string(input.max_script_sig_length),
     int.to_string(input.script_sig_252_count),
     int.to_string(input.script_sig_253_count),
-    int.to_string(input.near_policy_script_sig_count),
+    int.to_string(input.script_sig_9000_to_10000_count),
     int.to_string(output.max_script_pubkey_length),
     int.to_string(output.script_pubkey_252_count),
     int.to_string(output.script_pubkey_253_count),
-    int.to_string(output.near_policy_script_pubkey_count),
+    int.to_string(output.script_pubkey_9000_to_10000_count),
     int.to_string(witness.empty_stack_count),
     int.to_string(witness.nonempty_stack_count),
     int.to_string(witness.max_stack_item_count),

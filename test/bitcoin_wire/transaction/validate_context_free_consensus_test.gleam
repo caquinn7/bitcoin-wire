@@ -47,7 +47,7 @@ pub fn validate_context_free_consensus_rejects_tx_with_no_outputs_test() {
 pub fn validate_context_free_consensus_accepts_tx_at_base_size_limit_test() {
   let stripped_size = 1_000_000
   let tx_bytes = legacy_tx_with_stripped_size(stripped_size, <<0:64-little>>)
-  let policy = large_transaction_policy(tx_bytes, stripped_size - 64)
+  let policy = large_transaction_policy(tx_bytes)
 
   let assert Ok(tx) = transaction.deserialize_with_policy(tx_bytes, policy)
 
@@ -59,7 +59,7 @@ pub fn validate_context_free_consensus_accepts_tx_at_base_size_limit_test() {
 pub fn validate_context_free_consensus_rejects_tx_over_base_size_limit_test() {
   let stripped_size = 1_000_001
   let tx_bytes = legacy_tx_with_stripped_size(stripped_size, <<0:64-little>>)
-  let policy = large_transaction_policy(tx_bytes, stripped_size - 64)
+  let policy = large_transaction_policy(tx_bytes)
 
   let assert Ok(tx) = transaction.deserialize_with_policy(tx_bytes, policy)
 
@@ -89,7 +89,7 @@ pub fn validate_context_free_consensus_ignores_witness_bytes_for_base_size_test(
     bitcoin_wire.assemble_segwit_transaction_bytes([input], [output], [
       witness_stack,
     ])
-  let policy = large_transaction_policy(tx_bytes, 10_000)
+  let policy = large_transaction_policy(tx_bytes)
 
   assert bit_array.byte_size(tx_bytes) > 1_000_000
 
@@ -103,7 +103,7 @@ pub fn validate_context_free_consensus_reports_base_size_before_monetary_violati
   let stripped_size = 1_000_001
   let negative_value = <<0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF>>
   let tx_bytes = legacy_tx_with_stripped_size(stripped_size, negative_value)
-  let policy = large_transaction_policy(tx_bytes, stripped_size - 64)
+  let policy = large_transaction_policy(tx_bytes)
 
   let assert Ok(tx) = transaction.deserialize_with_policy(tx_bytes, policy)
 
@@ -664,8 +664,7 @@ fn legacy_tx_with_stripped_size(
   >>
 }
 
-fn large_transaction_policy(tx_bytes: BitArray, max_script_size: Int) {
+fn large_transaction_policy(tx_bytes: BitArray) {
   transaction.default_decode_policy()
   |> transaction.decode_policy_with_max_tx_size(bit_array.byte_size(tx_bytes))
-  |> transaction.decode_policy_with_max_script_size(max_script_size)
 }

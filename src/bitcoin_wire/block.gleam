@@ -678,7 +678,9 @@ pub opaque type DecodePolicy {
 /// some valid Bitcoin blocks may be rejected by this configuration.
 ///
 /// By default, decoding accepts serialized blocks up to 4,000,000 bytes and
-/// transaction counts up to 20,000.
+/// transaction counts up to 20,000. Each contained transaction has input and
+/// output count limits of 100,000 each and a total witness item count limit of
+/// 100,000 across all its input stacks.
 pub fn default_decode_policy() -> DecodePolicy {
   DecodePolicy(
     max_block_size: 4_000_000,
