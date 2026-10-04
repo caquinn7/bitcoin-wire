@@ -63,10 +63,23 @@ the same little-endian order used on the Bitcoin wire. Use
 
 | Limit | Default |
 | --- | ---: |
-| Serialized transaction size | 400,000 bytes |
+| Serialized transaction size | 4,000,000 bytes |
 | Input count | 100,000 |
-| Output count | 100,000 |
-| Total witness item count across all input stacks | 100,000 |
+| Output count | 125,000 |
+| Total witness item count across all input stacks | 4,000,000 |
+
+These defaults are permissive: their size and count ceilings accommodate
+canonical encodings of consensus-valid transactions under current Bitcoin
+limits. A transaction must fit within the 4,000,000-weight-unit block limit,
+and serialized byte size cannot exceed weight. Each witness item requires at
+least one byte. Inputs and outputs require at least 41 and 9 non-witness bytes,
+respectively, charged at four weight units per byte; their count ceilings exceed
+what can fit. See [BIP 141](https://github.com/bitcoin/bips/blob/master/bip-0141.mediawiki)
+for the weight rules.
+
+Serialized size does not directly bound heap usage: decoded collections can
+occupy much more memory than their wire bytes. Callers with tighter resource
+budgets can configure lower limits.
 
 Use `default_decode_policy` and the `decode_policy_with_*` builders to customize
 them:

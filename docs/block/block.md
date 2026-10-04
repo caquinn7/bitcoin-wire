@@ -103,6 +103,22 @@ validation.
 
 ## Decode Policy
 
+The defaults accept serialized blocks up to 4,000,000 bytes and up to 20,000
+transactions. Each transaction inherits the default transaction policy:
+100,000 inputs, 125,000 outputs, and 4,000,000 total witness items.
+
+These permissive ceilings accommodate canonical encodings of consensus-valid
+blocks under current Bitcoin limits. Serialized size cannot exceed the
+4,000,000-weight-unit block limit, and a valid transaction weighs at least 240
+weight units, so the transaction-count ceiling exceeds what can fit. See
+[BIP 141](https://github.com/bitcoin/bips/blob/master/bip-0141.mediawiki) and
+[Bitcoin Core's consensus constants](https://github.com/bitcoin/bitcoin/blob/master/src/consensus/consensus.h).
+The inherited input, output, and witness item count limits are explained in the
+[transaction guide](https://github.com/caquinn7/bitcoin-wire/blob/main/docs/transaction/transaction.md#decode-policy).
+
+Serialized size does not directly bound heap usage. Callers with tighter
+resource budgets can configure lower byte and collection-count limits.
+
 Block decoding applies the limit configured by
 `block.decode_policy_with_max_block_size` to the complete block byte envelope
 and uses the configured transaction policy for every contained transaction. For
