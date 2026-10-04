@@ -215,7 +215,7 @@ fn measure_synthetic_witness_item_tx_decoding() -> List(PerfCaseResult) {
       two_tier_synthetic_curve([1, 100], [1000]),
     ),
     measure_cases(
-      [max_witness_item_count_deserialize_case()],
+      [large_witness_item_count_deserialize_case()],
       slow_synthetic_tx_measurement_config(),
       "deserialize",
       transaction.deserialize,
@@ -254,18 +254,28 @@ fn measure_malformed_tx_decoding() -> List(PerfCaseResult) {
 }
 
 fn measure_policy_limit_tx_decoding() -> List(PerfCaseResult) {
-  let policy_limit_deserialize_inputs = [
-    oversized_transaction_policy_deserialize_case("oversized transaction"),
-    excessive_witness_item_count_deserialize_case(
-      "excessive witness item count",
-    ),
-  ]
+  let witness_policy =
+    transaction.default_decode_policy()
+    |> transaction.decode_policy_with_max_witness_item_count(100_000)
 
-  measure_cases(
-    policy_limit_deserialize_inputs,
-    measurement_config(100),
-    "deserialize",
-    transaction.deserialize,
+  list.append(
+    measure_cases(
+      [oversized_transaction_policy_deserialize_case("oversized transaction")],
+      measurement_config(100),
+      "deserialize",
+      transaction.deserialize,
+    ),
+    measure_cases(
+      [
+        excessive_witness_item_count_deserialize_case(
+          "excessive witness item count",
+          witness_policy,
+        ),
+      ],
+      measurement_config(100),
+      "deserialize_with_policy",
+      transaction.deserialize_with_policy(_, witness_policy),
+    ),
   )
 }
 
@@ -450,11 +460,9 @@ fn oversized_transaction_policy_deserialize_case(
   PerfCaseInput(input_label, tx_size, tx_bytes)
 }
 
-fn max_witness_item_count_deserialize_case() -> PerfCaseInput(BitArray) {
-  let item_count =
-    transaction.default_decode_policy()
-    |> transaction.decode_policy_max_witness_item_count
-  // Empty items reach the collection limit while staying inside the byte limit.
+fn large_witness_item_count_deserialize_case() -> PerfCaseInput(BitArray) {
+  // Keep this collection workload bounded independently of policy defaults.
+  let item_count = 100_000
   let tx_bytes = build_synthetic_segwit_tx(1, 1, item_count, 0)
   let assert Ok(tx) = transaction.deserialize(tx_bytes)
   let assert Ok([stack]) = transaction.get_witnesses(tx)
@@ -469,12 +477,12 @@ fn max_witness_item_count_deserialize_case() -> PerfCaseInput(BitArray) {
 
 fn excessive_witness_item_count_deserialize_case(
   input_label: String,
+  policy: transaction.DecodePolicy,
 ) -> PerfCaseInput(BitArray) {
-  let max_item_count =
-    transaction.default_decode_policy()
-    |> transaction.decode_policy_max_witness_item_count
+  let max_item_count = transaction.decode_policy_max_witness_item_count(policy)
   let tx_bytes = build_synthetic_segwit_tx(1, 1, max_item_count + 1, 0)
-  let assert Error(decode_err) = transaction.deserialize(tx_bytes)
+  let assert Error(decode_err) =
+    transaction.deserialize_with_policy(tx_bytes, policy)
   assert transaction.get_decode_error_kind(decode_err)
     == PolicyLimitExceeded(
       MaxWitnessItemCount,

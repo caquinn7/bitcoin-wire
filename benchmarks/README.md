@@ -265,7 +265,8 @@ witness-list traversal.
 `transaction.deserialize.synthetic-witness-items` measures deserializing one SegWit input
 while the number of witness stack items grows. It is meant to catch per-item
 overhead, CompactSize item count handling problems, and list-building
-regressions.
+regressions. Its large empty-item workload stays fixed at 100,000 items,
+independently of the default witness item limit.
 
 `transaction.deserialize.synthetic-witness-payload` measures deserialization while witness
 payload bytes grow but witness structure stays simple. Deserialization is
@@ -280,9 +281,11 @@ late-failure paths and ensure truncation checks stay precise.
 `transaction.deserialize.policy-limits` measures policy-limit rejection before unnecessary
 payload work. Its oversized-transaction row includes a complete SegWit
 transaction with a large witness payload and checks rejection at the default
-400,000-byte input-buffer limit before decoding begins. Its excessive-witness-item
-row stays inside that byte envelope and checks rejection at 100,001 zero-length
-items before any witness items are decoded.
+4,000,000-byte input-buffer limit before decoding begins. Its excessive-witness-item
+row uses `deserialize_with_policy` with an explicit limit of 100,000 witness
+items. It stays inside the byte envelope and checks rejection at 100,001
+zero-length items before any witness items are decoded. The policy is constructed
+before timing and shared by preflight and measured deserialization.
 
 ### Inspection
 

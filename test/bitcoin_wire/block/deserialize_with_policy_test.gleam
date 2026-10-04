@@ -18,10 +18,11 @@ pub fn default_decode_policy_returns_expected_values_test() {
 
   assert block.decode_policy_max_block_size(policy) == 4_000_000
   assert block.decode_policy_max_tx_count(policy) == 20_000
-  assert transaction.decode_policy_max_tx_size(tx_policy) == 400_000
+  assert transaction.decode_policy_max_tx_size(tx_policy) == 4_000_000
   assert transaction.decode_policy_max_input_count(tx_policy) == 100_000
-  assert transaction.decode_policy_max_output_count(tx_policy) == 100_000
-  assert transaction.decode_policy_max_witness_item_count(tx_policy) == 100_000
+  assert transaction.decode_policy_max_output_count(tx_policy) == 125_000
+  assert transaction.decode_policy_max_witness_item_count(tx_policy)
+    == 4_000_000
 }
 
 pub fn decode_policy_builder_overrides_default_limits_test() {

@@ -1382,9 +1382,9 @@ fn field_error(
 
 /// Configuration policy for transaction decoding limits.
 ///
-/// This type controls resource constraints during transaction decoding to protect
-/// against malicious inputs that could cause excessive memory allocation or
-/// processing time.
+/// This type controls byte and collection-count limits during transaction
+/// decoding. Callers can configure tighter limits to constrain work and
+/// allocation when decoding untrusted inputs.
 /// 
 /// Limits are enforced during decoding. If a limit is exceeded,
 /// decoding fails with `PolicyLimitExceeded`.
@@ -1402,7 +1402,7 @@ fn field_error(
 ///
 /// ## See Also
 ///
-/// - `default_decode_policy` for the standard decoding limits
+/// - `default_decode_policy` for the default decoding limits
 /// - `deserialize_with_policy` to apply a custom policy
 pub opaque type DecodePolicy {
   DecodePolicy(
@@ -1419,21 +1419,25 @@ pub opaque type DecodePolicy {
 
 /// The default transaction decoding policy.
 ///
-/// Provides reasonable resource limits for transaction decoding, applied
-/// automatically when using `deserialize` or `deserialize_hex`. These defaults
-/// protect against malicious inputs while preventing excessive memory allocation
-/// and processing time. As these are policy limits rather than consensus rules,
-/// some valid Bitcoin transactions may be rejected by this configuration.
+/// Provides permissive limits, applied automatically when using `deserialize`
+/// or `deserialize_hex`. They indirectly bound heap usage during binary
+/// decoding by limiting serialized size and collection counts. Callers with
+/// stricter resource budgets can configure lower limits.
 /// 
 /// By default, whole-value decoding accepts serialized transactions up to
-/// 400,000 bytes, input and output counts up to 100,000 each, and up to 100,000
-/// witness items in total across all input stacks, including zero-length items.
+/// 4,000,000 bytes, up to 100,000 inputs, up to 125,000 outputs, and up to
+/// 4,000,000 witness items in total across all input stacks, including zero-length
+/// items.
+///
+/// These defaults cover canonical encodings of consensus-valid transactions
+/// within Bitcoin's 4,000,000-weight-unit block limit. Consensus validation is
+/// separate.
 pub fn default_decode_policy() -> DecodePolicy {
   DecodePolicy(
-    max_tx_size: 400_000,
+    max_tx_size: 4_000_000,
     max_input_count: 100_000,
-    max_output_count: 100_000,
-    max_witness_item_count: 100_000,
+    max_output_count: 125_000,
+    max_witness_item_count: 4_000_000,
   )
 }
 
@@ -1516,9 +1520,8 @@ pub fn decode_policy_max_witness_item_count(policy: DecodePolicy) -> Int {
 /// Bitcoin transaction into a typed value. The entire input must contain
 /// exactly one transaction; trailing bytes are rejected.
 ///
-/// This function applies `default_decode_policy` to protect against malicious inputs
-/// by enforcing limits on transaction size, input/output counts, and total
-/// witness item count.
+/// This function applies the permissive `default_decode_policy` limits on
+/// transaction size, input/output counts, and total witness item count.
 /// 
 /// For custom resource limits, use `deserialize_with_policy` instead.
 ///
