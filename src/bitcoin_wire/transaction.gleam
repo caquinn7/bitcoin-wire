@@ -6,6 +6,7 @@ import bitcoin_wire/internal/decode
 import bitcoin_wire/internal/double_sha256
 import bitcoin_wire/internal/fixed_int/int64
 import bitcoin_wire/internal/fixed_int/uint64.{type Uint64}
+import bitcoin_wire/internal/hex
 import bitcoin_wire/internal/lifecycle
 import bitcoin_wire/internal/parser.{type Parser}
 import bitcoin_wire/internal/reader.{type Reader}
@@ -1101,8 +1102,8 @@ fn decode_small_int_opcode(opcode: Int) -> Int {
 
 /// An error that occurred while deserializing a Bitcoin transaction from hex.
 ///
-/// Distinguishes failures during hex-to-bytes conversion from failures during
-/// transaction decoding.
+/// Distinguishes invalid hexadecimal input from decode policy and transaction
+/// decoding failures.
 pub type DeserializeHexError {
   /// The hexadecimal string could not be converted to bytes.
   ///
@@ -1110,10 +1111,11 @@ pub type DeserializeHexError {
   /// odd-length hex string or the presence of invalid hexadecimal characters.
   InvalidHex
 
-  /// The byte sequence could not be decoded as a Bitcoin transaction.
+  /// The input exceeded a decode policy limit or its decoded bytes were not a
+  /// well-formed Bitcoin transaction encoding.
   ///
-  /// This wraps a `DecodeError` containing details about what went wrong during
-  /// the transaction decoding phase.
+  /// A byte-size policy error can be returned before hex-to-bytes conversion.
+  /// This wraps a `DecodeError` containing details about the failure.
   DecodeFailed(DecodeError)
 }
 
@@ -1358,6 +1360,12 @@ fn with_context(err: DecodeError, context: List(ParseContext)) -> DecodeError {
   })
 }
 
+fn error_at_offset_zero(kind: DecodeErrorKind) -> DecodeError {
+  kind
+  |> new_decode_error(0)
+  |> with_context([InTransaction])
+}
+
 /// Build a DecodeError factory function for a specific field at a given offset.
 ///
 /// Returns a function that takes a DecodeErrorKind and produces a DecodeError
@@ -1558,19 +1566,13 @@ pub fn deserialize_with_policy(
   bytes: BitArray,
   policy: DecodePolicy,
 ) -> Result(Transaction(Parsed), DecodeError) {
-  let error_at_zero_offset = fn(err) {
-    err
-    |> new_decode_error(0)
-    |> with_context([InTransaction])
-  }
-
   use reader <- result.try(
     bytes
     |> reader.new
     |> result.map_error(fn(err) {
       case err {
         reader.NonByteAlignedInput(bit_count) ->
-          error_at_zero_offset(NonByteAlignedInput(bit_count))
+          error_at_offset_zero(NonByteAlignedInput(bit_count))
       }
     }),
   )
@@ -1579,7 +1581,7 @@ pub fn deserialize_with_policy(
   use <- bool.guard(
     tx_size > policy.max_tx_size,
     Error(
-      error_at_zero_offset(PolicyLimitExceeded(
+      error_at_offset_zero(PolicyLimitExceeded(
         MaxTransactionSize,
         tx_size,
         policy.max_tx_size,
@@ -1625,6 +1627,10 @@ pub fn decode_prefix_with_policy(
 /// This function applies `default_decode_policy` for resource limits.
 /// For custom resource limits, use `deserialize_hex_with_policy` instead.
 ///
+/// Valid hex that exceeds the byte-size limit is rejected before conversion.
+/// Invalid hex takes precedence, including for oversized input. Checking an
+/// oversized string's characters still requires work proportional to its length.
+///
 /// ## Returns
 ///
 /// - `Ok(Transaction(Parsed))`: Successfully deserialized within the default policy limits.
@@ -1645,6 +1651,10 @@ pub fn deserialize_hex(
 /// fine-grained control over resource limits. Use this when working with
 /// hex-encoded transaction data that requires custom resource constraints.
 ///
+/// Valid hex that exceeds the byte-size limit is rejected before conversion.
+/// Invalid hex takes precedence, including for oversized input. Checking an
+/// oversized string's characters still requires work proportional to its length.
+///
 /// ## Returns
 ///
 /// - `Ok(Transaction(Parsed))`: Successfully deserialized within the supplied policy limits.
@@ -1658,8 +1668,16 @@ pub fn deserialize_hex_with_policy(
 ) -> Result(Transaction(Parsed), DeserializeHexError) {
   use bytes <- result.try(
     hex
-    |> bit_array.base16_decode
-    |> result.replace_error(InvalidHex),
+    |> hex.decode_with_max_size(policy.max_tx_size)
+    |> result.map_error(fn(err) {
+      case err {
+        hex.InvalidHex -> InvalidHex
+        hex.SizeLimitExceeded(actual:, limit:) ->
+          PolicyLimitExceeded(MaxTransactionSize, actual, limit)
+          |> error_at_offset_zero
+          |> DecodeFailed
+      }
+    }),
   )
 
   bytes

@@ -104,6 +104,10 @@ checked against the remaining bytes, then against the cumulative limit before
 any of that stack's items are decoded. A violation reports `MaxWitnessItemCount`
 with the cumulative count and points to the current stack's item-count field.
 
+Hex entry points enforce the same byte-size limit before allocating decoded
+bytes. Invalid hex takes precedence over size-policy errors, so oversized
+strings may still need to be scanned.
+
 When transactions are decoded inside a block, the block's serialized-size limit
 provides the byte envelope and `max_tx_size` is ignored. Each contained
 transaction still uses its configured input, output, and total witness item count
