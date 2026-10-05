@@ -1,10 +1,12 @@
 import bitcoin_wire/block.{
-  DecodeFailed, InsufficientBytes, MaxBlockSize, MaxTransactionCount,
+  DecodeFailed, InsufficientBytes, InvalidHex, MaxBlockSize, MaxTransactionCount,
   NonByteAlignedInput, PolicyLimitExceeded, TransactionDecodeFailed,
+  UnexpectedEof,
 }
 import bitcoin_wire/transaction
 import gleam/bit_array
 import gleam/list
+import gleam/string
 import support/bitcoin_wire
 import support/decode_assertions
 
@@ -305,21 +307,23 @@ pub fn deserialize_with_policy_ignores_contained_transaction_max_tx_size_test() 
 pub fn deserialize_hex_with_policy_accepts_block_at_max_block_size_test() {
   let bytes =
     bitcoin_wire.build_header_only_block_bytes(
-      1,
+      0xABCD,
       <<0:size(256)>>,
       <<0:size(256)>>,
       0,
       0,
       0,
     )
-
   let policy = policy_with_max_block_size(bit_array.byte_size(bytes))
-  let assert Ok(block) =
-    bytes
-    |> bit_array.base16_encode
-    |> block.deserialize_hex_with_policy(policy)
+  let upper_hex = bit_array.base16_encode(bytes)
 
-  assert block.get_transactions(block) == []
+  [upper_hex, string.lowercase(upper_hex)]
+  |> list.each(fn(hex) {
+    let assert Ok(decoded_block) =
+      block.deserialize_hex_with_policy(hex, policy)
+    assert block.get_transactions(decoded_block) == []
+    assert block.serialize(decoded_block) == bytes
+  })
 }
 
 pub fn deserialize_hex_with_policy_wraps_policy_limit_error_test() {
@@ -342,6 +346,65 @@ pub fn deserialize_hex_with_policy_wraps_policy_limit_error_test() {
 
   assert decode_assertions.check_block_decode_error(error, 0, "block")
     == PolicyLimitExceeded(MaxBlockSize, block_size, block_size - 1)
+}
+
+pub fn deserialize_hex_with_policy_prioritizes_invalid_hex_over_size_limit_test() {
+  let policy = policy_with_max_block_size(1)
+  // Include non-ASCII strings whose UTF-8 and UTF-16 lengths differ, including
+  // cases that cross the size threshold on only one target. Both return InvalidHex.
+  [
+    "000",
+    "zz00",
+    "0z00",
+    "00zz",
+    "000z",
+    "0000zz",
+    "00 0",
+    "00é0",
+    "00😀0",
+    "é0",
+    "😀",
+  ]
+  |> list.each(fn(hex) {
+    assert block.deserialize_hex_with_policy(hex, policy) == Error(InvalidHex)
+  })
+}
+
+pub fn deserialize_hex_with_policy_rejects_large_valid_hex_test() {
+  let hex = string.repeat("aB", 100_000)
+  let assert Error(DecodeFailed(error)) =
+    block.deserialize_hex_with_policy(hex, policy_with_max_block_size(1))
+
+  assert decode_assertions.check_block_decode_error(error, 0, "block")
+    == PolicyLimitExceeded(MaxBlockSize, 100_000, 1)
+}
+
+pub fn deserialize_hex_with_policy_applies_zero_byte_limit_test() {
+  let policy = policy_with_max_block_size(0)
+  let assert Error(DecodeFailed(size_error)) =
+    block.deserialize_hex_with_policy("00", policy)
+  assert decode_assertions.check_block_decode_error(size_error, 0, "block")
+    == PolicyLimitExceeded(MaxBlockSize, 1, 0)
+
+  assert block.deserialize_hex_with_policy("z0", policy) == Error(InvalidHex)
+
+  // Empty valid hex fits the zero-byte envelope and reaches structural decoding.
+  let assert Error(DecodeFailed(empty_error)) =
+    block.deserialize_hex_with_policy("", policy)
+  assert decode_assertions.check_block_decode_error(
+      empty_error,
+      0,
+      "block.header.version",
+    )
+    == UnexpectedEof(bytes_needed: 4, remaining: 0)
+}
+
+pub fn deserialize_hex_with_policy_applies_negative_byte_limit_test() {
+  let assert Error(DecodeFailed(error)) =
+    block.deserialize_hex_with_policy("", policy_with_max_block_size(-1))
+
+  assert decode_assertions.check_block_decode_error(error, 0, "block")
+    == PolicyLimitExceeded(MaxBlockSize, 0, -1)
 }
 
 // ============================================================================

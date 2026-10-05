@@ -8,7 +8,8 @@ relative changes within the same machine, target, and runtime. This
 development-only package is not published independently.
 
 Input construction, hex decoding, and preflight assertions happen before timing
-begins. Timed rows measure only the operation named in the `case` column.
+begins, except that hex-entry-point rows include hex validation and conversion
+when needed. Timed rows measure the operation named in the `case` column.
 
 ## Commands
 
@@ -287,6 +288,16 @@ items. It stays inside the byte envelope and checks rejection at 100,001
 zero-length items before any witness items are decoded. The policy is constructed
 before timing and shared by preflight and measured deserialization.
 
+`transaction.deserialize.hex-policy-limits` measures
+`deserialize_hex_with_policy` rejecting a complete transaction with one
+100,000-byte witness payload under an explicit 100,000-byte size limit. The
+transaction's overhead puts it over the limit. Input encoding, policy
+construction, successful default deserialization, and exact policy-error
+preflight happen before timing. The timed operation validates the oversized
+hex without constructing decoded bytes; preserving `InvalidHex` precedence
+requires this scan. The row uses one operation per timed call, and `bytes`
+reports the implied serialized size rather than the hex string's length.
+
 ### Inspection
 
 `transaction.inspection.coinbase-shape` measures `has_coinbase_shape` over
@@ -374,6 +385,8 @@ duration. The `bytes` value is the complete serialized size of the input value:
 rows, including base-size and weight rows. Fixture loading and hex decoding,
 synthetic transaction and deterministic-header construction, proof-of-work
 setup and mining, and correctness preflight all happen outside timed regions.
+Hex-entry-point rows include hex validation and conversion when needed in their
+timed public operation.
 Parsing is also outside timing for rows that take parsed blocks or headers;
 deserialize rows time it as their named operation.
 
@@ -404,6 +417,16 @@ and `1,000` transactions. Construction and count, serialization-round-trip,
 and legacy size/weight preflight occur before timing, so each timed operation
 deserializes only the complete block bytes. The points use `100`, `100`,
 `10`, and `1` operations per timed call respectively.
+
+`block.deserialize.hex-policy-limits` measures `deserialize_hex_with_policy`
+rejecting a complete block containing one transaction with one 100,000-byte
+witness payload under an explicit 100,000-byte block-size limit. Transaction
+and block overhead put it over the limit. Input encoding, policy construction,
+successful default deserialization, and exact policy-error preflight happen
+before timing. The timed operation validates the oversized hex without
+constructing decoded bytes, preserving `InvalidHex` precedence. The row uses
+one operation per timed call, and `bytes` reports the implied serialized block
+size rather than the hex string's length.
 
 ### Size and Weight
 

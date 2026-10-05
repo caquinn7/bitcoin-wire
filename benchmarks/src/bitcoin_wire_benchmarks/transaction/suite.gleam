@@ -4,7 +4,8 @@
 //// deserialization, transaction inspection, context-free consensus validation,
 //// transaction id computation, and serialization. Input construction, hex
 //// decoding, validation of inspection fixtures, and preflight assertions are
-//// intentionally performed before timing begins.
+//// intentionally performed before timing begins. Hex-entry-point rows time
+//// their public operation, including hex validation and conversion when needed.
 ////
 //// Benchmark cases run one or more logical operations per timed call. Fast
 //// cases use larger batches to reduce timer overhead; slower cases can use
@@ -13,8 +14,8 @@
 //// `deserialize` or one `compute_txid` call.
 
 import bitcoin_wire/transaction.{
-  type ContextFreeValidated, type Parsed, type Transaction, DuplicateInput,
-  InsufficientBytes, MaxTransactionSize, MaxWitnessItemCount,
+  type ContextFreeValidated, type Parsed, type Transaction, DecodeFailed,
+  DuplicateInput, InsufficientBytes, MaxTransactionSize, MaxWitnessItemCount,
   PolicyLimitExceeded, TotalOutputValueOutOfRange, UnexpectedEof,
 }
 import bitcoin_wire_benchmarks/internal/benchmark.{
@@ -90,6 +91,10 @@ pub fn section_definitions() -> List(PerfSectionDefinition) {
     PerfSectionDefinition(
       "transaction.deserialize.policy-limits",
       measure_policy_limit_tx_decoding,
+    ),
+    PerfSectionDefinition(
+      "transaction.deserialize.hex-policy-limits",
+      measure_hex_policy_limit_tx_decoding,
     ),
     PerfSectionDefinition(
       "transaction.inspection.coinbase-shape",
@@ -276,6 +281,32 @@ fn measure_policy_limit_tx_decoding() -> List(PerfCaseResult) {
       "deserialize_with_policy",
       transaction.deserialize_with_policy(_, witness_policy),
     ),
+  )
+}
+
+fn measure_hex_policy_limit_tx_decoding() -> List(PerfCaseResult) {
+  let max_tx_size = 100_000
+  let tx_bytes = build_synthetic_segwit_tx(1, 1, 1, max_tx_size)
+  let tx_size = bit_array.byte_size(tx_bytes)
+  let assert Ok(_) = transaction.deserialize(tx_bytes)
+  let hex = bit_array.base16_encode(tx_bytes)
+
+  let policy =
+    transaction.default_decode_policy()
+    |> transaction.decode_policy_with_max_tx_size(max_tx_size)
+
+  let assert Error(DecodeFailed(error)) =
+    transaction.deserialize_hex_with_policy(hex, policy)
+  assert transaction.get_decode_error_kind(error)
+    == PolicyLimitExceeded(MaxTransactionSize, tx_size, max_tx_size)
+  assert transaction.get_decode_error_offset(error) == 0
+  assert transaction.get_decode_error_path(error) == "transaction"
+
+  measure_cases(
+    [PerfCaseInput("oversized transaction hex max-bytes=100000", tx_size, hex)],
+    measurement_config(1),
+    "deserialize_hex_with_policy",
+    transaction.deserialize_hex_with_policy(_, policy),
   )
 }
 

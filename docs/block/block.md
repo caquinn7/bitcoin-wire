@@ -145,6 +145,10 @@ only byte-envelope limit for the block and its transactions.
 The input, output, and total witness item count limits apply separately to each
 transaction.
 
+Whole-block hex entry points enforce the block byte-size limit before allocating
+decoded bytes. Invalid hex takes precedence over size-policy errors, so
+oversized strings may still need to be scanned.
+
 Previous-block hashes, Merkle roots, and computed block hashes are exposed as
 `Hash256` values in the same little-endian order used on the Bitcoin wire. Use
 `hash256.to_display_hex` for conventional explorer notation or

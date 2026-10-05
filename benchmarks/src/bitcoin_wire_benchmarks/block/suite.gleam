@@ -7,7 +7,8 @@
 //// and header construction, proof-of-work setup and mining, and preflight
 //// assertions are intentionally performed before timing begins. Rows that take
 //// parsed blocks are deserialized during setup; deserialization rows time that
-//// work directly.
+//// work directly. Hex-entry-point rows include hex validation and conversion
+//// when needed in their timed public operation.
 ////
 //// Benchmark cases run one or more logical operations per timed call. Fast
 //// cases use larger batches to reduce timer overhead; slower cases use smaller
@@ -18,7 +19,8 @@
 
 import bitcoin_wire/block.{
   type Block, type ConsensusViolation, type Header, type Parsed, type PowLimit,
-  BaseSizeLimitExceeded, NonMutated, WeightLimitExceeded,
+  BaseSizeLimitExceeded, DecodeFailed, MaxBlockSize, NonMutated,
+  PolicyLimitExceeded, WeightLimitExceeded,
 }
 import bitcoin_wire/hash256
 import bitcoin_wire/transaction.{type Transaction}
@@ -64,6 +66,10 @@ pub fn section_definitions() -> List(PerfSectionDefinition) {
     PerfSectionDefinition(
       "block.deserialize.synthetic-transactions",
       measure_synthetic_transaction_block_deserialize,
+    ),
+    PerfSectionDefinition(
+      "block.deserialize.hex-policy-limits",
+      measure_hex_policy_limit_block_deserialize,
     ),
     PerfSectionDefinition(
       "block.size-and-weight.fixtures",
@@ -158,6 +164,38 @@ fn measure_synthetic_transaction_block_deserialize() -> List(PerfCaseResult) {
     list.map(_, synthetic_transaction_deserialize_case),
     "deserialize",
     block.deserialize,
+  )
+}
+
+fn measure_hex_policy_limit_block_deserialize() -> List(PerfCaseResult) {
+  let max_block_size = 100_000
+  let witness_stack = <<
+    1,
+    compact_size(max_block_size):bits,
+    0:size({ max_block_size * 8 }),
+  >>
+  let tx_bytes = build_minimal_segwit_transaction(<<>>, witness_stack)
+  let block_bytes = <<0:size(640), 1, tx_bytes:bits>>
+  let block_size = bit_array.byte_size(block_bytes)
+  let assert Ok(_) = block.deserialize(block_bytes)
+  let hex = bit_array.base16_encode(block_bytes)
+
+  let policy =
+    block.default_decode_policy()
+    |> block.decode_policy_with_max_block_size(max_block_size)
+
+  let assert Error(DecodeFailed(error)) =
+    block.deserialize_hex_with_policy(hex, policy)
+  assert block.get_decode_error_kind(error)
+    == PolicyLimitExceeded(MaxBlockSize, block_size, max_block_size)
+  assert block.get_decode_error_offset(error) == 0
+  assert block.get_decode_error_path(error) == "block"
+
+  measure_cases(
+    [PerfCaseInput("oversized block hex max-bytes=100000", block_size, hex)],
+    measurement_config(1),
+    "deserialize_hex_with_policy",
+    block.deserialize_hex_with_policy(_, policy),
   )
 }
 

@@ -5,6 +5,7 @@ import bitcoin_wire/internal/compact_size
 import bitcoin_wire/internal/decode
 import bitcoin_wire/internal/double_sha256
 import bitcoin_wire/internal/fixed_int/uint64.{type Uint64}
+import bitcoin_wire/internal/hex
 import bitcoin_wire/internal/lifecycle
 import bitcoin_wire/internal/parser.{type Parser}
 import bitcoin_wire/internal/pow_target.{type PowTarget}
@@ -380,7 +381,7 @@ pub type DeserializeHeaderHexError {
 
 /// An error that occurred while deserializing a Bitcoin block from hex.
 ///
-/// Distinguishes failures during hex-to-bytes conversion from underlying block
+/// Distinguishes invalid hexadecimal input from decode policy and block
 /// decoding failures.
 pub type DeserializeHexError {
   /// The hexadecimal string could not be converted to bytes.
@@ -389,10 +390,11 @@ pub type DeserializeHexError {
   /// odd-length hex string or the presence of invalid hexadecimal characters.
   InvalidHex
 
-  /// The byte sequence could not be decoded as a Bitcoin block.
+  /// The input exceeded a decode policy limit or its decoded bytes were not a
+  /// well-formed Bitcoin block encoding.
   ///
-  /// This wraps a `DecodeError` containing details about what went wrong during
-  /// the block decoding phase.
+  /// A byte-size policy error can be returned before hex-to-bytes conversion.
+  /// This wraps a `DecodeError` containing details about the failure.
   DecodeFailed(DecodeError)
 }
 
@@ -570,6 +572,12 @@ fn with_context(err: DecodeError, context: List(ParseContext)) -> DecodeError {
   list.fold(context, err, fn(err, ctx) {
     DecodeError(..err, context: [ctx, ..err.context])
   })
+}
+
+fn error_at_offset_zero(kind: DecodeErrorKind) -> DecodeError {
+  kind
+  |> new_decode_error(0)
+  |> with_context([InBlock])
 }
 
 fn field_error(
@@ -792,19 +800,13 @@ pub fn deserialize_with_policy(
   bytes: BitArray,
   policy: DecodePolicy,
 ) -> Result(Block(Parsed), DecodeError) {
-  let error_at_zero_offset = fn(err) {
-    err
-    |> new_decode_error(0)
-    |> with_context([InBlock])
-  }
-
   use reader <- result.try(
     bytes
     |> reader.new
     |> result.map_error(fn(err) {
       case err {
         reader.NonByteAlignedInput(bit_count) ->
-          error_at_zero_offset(NonByteAlignedInput(bit_count))
+          error_at_offset_zero(NonByteAlignedInput(bit_count))
       }
     }),
   )
@@ -813,7 +815,7 @@ pub fn deserialize_with_policy(
   use <- bool.guard(
     block_size > policy.max_block_size,
     Error(
-      error_at_zero_offset(PolicyLimitExceeded(
+      error_at_offset_zero(PolicyLimitExceeded(
         MaxBlockSize,
         block_size,
         policy.max_block_size,
@@ -835,6 +837,10 @@ pub fn deserialize_with_policy(
 /// This function applies `default_decode_policy` for resource limits.
 /// For custom resource limits, use `deserialize_hex_with_policy` instead.
 ///
+/// Valid hex that exceeds the byte-size limit is rejected before conversion.
+/// Invalid hex takes precedence, including for oversized input. Checking an
+/// oversized string's characters still requires work proportional to its length.
+///
 /// ## Returns
 ///
 /// - `Ok(Block(Parsed))`: Successfully deserialized within the default policy limits.
@@ -855,6 +861,10 @@ pub fn deserialize_hex(
 /// fine-grained control over resource limits. Use this when working with
 /// hex-encoded block data that requires custom resource constraints.
 ///
+/// Valid hex that exceeds the byte-size limit is rejected before conversion.
+/// Invalid hex takes precedence, including for oversized input. Checking an
+/// oversized string's characters still requires work proportional to its length.
+///
 /// ## Returns
 ///
 /// - `Ok(Block(Parsed))`: Successfully deserialized within the supplied policy limits.
@@ -868,8 +878,16 @@ pub fn deserialize_hex_with_policy(
 ) -> Result(Block(Parsed), DeserializeHexError) {
   use bytes <- result.try(
     hex
-    |> bit_array.base16_decode
-    |> result.replace_error(InvalidHex),
+    |> hex.decode_with_max_size(policy.max_block_size)
+    |> result.map_error(fn(error) {
+      case error {
+        hex.InvalidHex -> InvalidHex
+        hex.SizeLimitExceeded(actual, limit) ->
+          PolicyLimitExceeded(MaxBlockSize, actual, limit)
+          |> error_at_offset_zero
+          |> DecodeFailed
+      }
+    }),
   )
 
   bytes
