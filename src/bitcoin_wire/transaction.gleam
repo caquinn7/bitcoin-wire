@@ -2646,9 +2646,6 @@ pub fn compute_wtxid(tx: Transaction(state)) -> Hash256 {
 /// `txid`: version, inputs, outputs, and lock_time — with no SegWit marker,
 /// flag, or witness stacks, regardless of whether the transaction is SegWit.
 ///
-/// The byte size of the returned value is the `base_size` used in BIP 141
-/// weight and virtual size calculations.
-///
 /// ## See Also
 ///
 /// - `compute_txid` — hashes this serialization to produce the txid
@@ -2723,17 +2720,6 @@ fn collect_output_parts(
 /// version, SegWit marker and flag (if applicable), inputs, outputs,
 /// witness stacks (if applicable), and lock_time. For legacy transactions,
 /// this is identical to `serialize_stripped`.
-///
-/// The byte size of the returned value is the `total_size` used in BIP 141
-/// weight and virtual size calculations:
-///
-/// ```
-/// weight = base_size * 3 + total_size
-/// vsize  = ceil(weight / 4)
-/// ```
-///
-/// where `base_size = bit_array.byte_size(serialize_stripped(tx))` and
-/// `total_size = bit_array.byte_size(serialize(tx))`.
 ///
 /// ## See Also
 ///
