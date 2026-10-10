@@ -581,15 +581,14 @@ fn error_at_offset_zero(kind: DecodeErrorKind) -> DecodeError {
 }
 
 fn field_error(
+  kind: DecodeErrorKind,
   field: ParseField,
   offset: Int,
   context: List(ParseContext),
-) -> fn(DecodeErrorKind) -> DecodeError {
-  fn(kind) {
-    kind
-    |> new_decode_error(offset)
-    |> with_context([AtField(field), ..context])
-  }
+) -> DecodeError {
+  kind
+  |> new_decode_error(offset)
+  |> with_context([AtField(field), ..context])
 }
 
 // ==============================================================================
@@ -968,7 +967,7 @@ fn transaction_count_parser(
     tx_count
     |> validate_parsed_transaction_count(reader, max_tx_count_policy, fn(kind) {
       kind
-      |> field_error(TransactionCount, start_offset, ctx)()
+      |> field_error(TransactionCount, start_offset, ctx)
       |> Error
     })
   })
@@ -1056,7 +1055,7 @@ fn field_parser(
   parser.from_reader(read_fn, fn(err, start_offset, ctx) {
     err
     |> decode.map_reader_error(UnexpectedEof)
-    |> field_error(field, start_offset, ctx)()
+    |> field_error(field, start_offset, ctx)
   })
 }
 
@@ -1067,7 +1066,7 @@ fn compact_size_parser(
   parser.from_reader(compact_size.read, fn(err, start_offset, ctx) {
     err
     |> decode.map_compact_size_error(UnexpectedEof, NonMinimalCompactSize)
-    |> field_error(field, start_offset, ctx)()
+    |> field_error(field, start_offset, ctx)
   })
 }
 
@@ -1080,7 +1079,7 @@ fn compact_size_int_parser(
   |> parser.try_with_start_offset(fn(value_u64, start_offset, _reader, ctx) {
     value_u64
     |> decode.uint64_to_int(IntegerOutOfRange)
-    |> result.map_error(field_error(field, start_offset, ctx))
+    |> result.map_error(field_error(_, field, start_offset, ctx))
   })
 }
 
