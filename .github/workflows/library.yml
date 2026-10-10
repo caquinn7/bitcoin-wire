@@ -1,4 +1,4 @@
-name: fuzz
+name: library
 
 on:
   push:
@@ -8,7 +8,7 @@ on:
 
 jobs:
   format:
-    name: fuzz format
+    name: library format
     runs-on: ubuntu-latest
     timeout-minutes: 5
 
@@ -21,11 +21,10 @@ jobs:
           gleam_version: "1.19.1"
 
       - name: Check formatting
-        working-directory: fuzz
-        run: gleam format --check
+        run: gleam format --check src test
 
-  smoke:
-    name: fuzz smoke (${{ matrix.platform }})
+  test:
+    name: library tests (${{ matrix.platform }})
     runs-on: ubuntu-latest
     timeout-minutes: 10
 
@@ -49,15 +48,7 @@ jobs:
           js_runtime: ${{ matrix.js_runtime }}
 
       - name: Download dependencies
-        working-directory: fuzz
         run: gleam deps download
 
-      - name: Build project
-        working-directory: fuzz
-        run: gleam build --target ${{ matrix.target }}
-
-      - name: Smoke test transactions
-        run: ./fuzz/run --target ${{ matrix.target }} ${{ matrix.runtime_options }} -- transaction 100 12345
-
-      - name: Smoke test blocks
-        run: ./fuzz/run --target ${{ matrix.target }} ${{ matrix.runtime_options }} -- block 10 12345
+      - name: Run tests
+        run: gleam test --target ${{ matrix.target }} ${{ matrix.runtime_options }}

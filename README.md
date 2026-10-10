@@ -90,6 +90,33 @@ gleam test -t erlang
 gleam test -t javascript --runtime node
 ```
 
+### Continuous Integration
+
+Pull requests and pushes to `main` run one workflow per project:
+
+| Workflow | Checks |
+| --- | --- |
+| `library` | Formatting and unit tests on Erlang and Node |
+| `fuzz` | Formatting, builds, and short transaction/block fuzz runs on Erlang and Node |
+| `benchmarks` | Formatting, builds, and selected fixture benchmark runs on Erlang and Node |
+| `examples` | Formatting and an Erlang build |
+
+Tests, builds, and smoke runs use the compatibility
+baseline in [the shared setup action](https://github.com/caquinn7/bitcoin-wire/blob/main/.github/actions/setup/action.yml).
+
+Fuzz smoke runs use a fixed seed and a small number of transaction and block
+iterations on each runtime. Each run also verifies the original corpus before
+mutation begins. Benchmark smoke runs exercise fixture loading, measurement,
+and table reporting for transactions and blocks. They do not enforce performance
+thresholds; use the performance harness's comparison runner for measured
+regression claims.
+
+At 1 a.m. Central (`America/Chicago`), the separate `fuzz-nightly` workflow runs
+longer transaction and block fuzz suites on Erlang and Node with a shared
+generated seed if `main` differs from its latest successful scheduled run.
+Unchanged successful commits are skipped, and failed runs are retried the
+following night. The schedule follows Central daylight saving time.
+
 ### Fuzz Testing
 
 The standalone [fuzz harness](https://github.com/caquinn7/bitcoin-wire/blob/main/fuzz/README.md) exercises transaction and block

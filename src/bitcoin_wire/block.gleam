@@ -968,7 +968,7 @@ fn transaction_count_parser(
     tx_count
     |> validate_parsed_transaction_count(reader, max_tx_count_policy, fn(kind) {
       kind
-      |> field_error(TransactionCount, start_offset, ctx)
+      |> field_error(TransactionCount, start_offset, ctx)()
       |> Error
     })
   })
@@ -1056,7 +1056,7 @@ fn field_parser(
   parser.from_reader(read_fn, fn(err, start_offset, ctx) {
     err
     |> decode.map_reader_error(UnexpectedEof)
-    |> field_error(field, start_offset, ctx)
+    |> field_error(field, start_offset, ctx)()
   })
 }
 
@@ -1067,7 +1067,7 @@ fn compact_size_parser(
   parser.from_reader(compact_size.read, fn(err, start_offset, ctx) {
     err
     |> decode.map_compact_size_error(UnexpectedEof, NonMinimalCompactSize)
-    |> field_error(field, start_offset, ctx)
+    |> field_error(field, start_offset, ctx)()
   })
 }
 

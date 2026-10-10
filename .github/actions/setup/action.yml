@@ -2,6 +2,10 @@ name: Setup runtimes
 description: Sets up Node (conditionally) and BEAM toolchain
 
 inputs:
+  gleam_version:
+    description: Gleam compiler version to install
+    required: false
+    default: "1.16.0"
   js_runtime:
     description: JavaScript runtime to set up (node or empty for Erlang-only)
     required: false
@@ -14,12 +18,12 @@ runs:
       if: inputs.js_runtime == 'node'
       uses: actions/setup-node@v4
       with:
-        node-version: "25.9.0"
+        node-version: "24.21.0"
 
     - name: Setup BEAM
       uses: erlef/setup-beam@v1
       with:
         otp-version: "28.5"
-        gleam-version: "1.16.0"
+        gleam-version: ${{ inputs.gleam_version }}
         rebar3-version: "3.27.0"
         version-type: strict

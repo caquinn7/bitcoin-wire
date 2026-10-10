@@ -25,57 +25,61 @@ type FixtureExpectation {
   )
 }
 
-const legacy_v1_fixture = FixtureExpectation(
-  file_name: "legacy-v1.hex",
-  byte_length: 1279,
-  version: 1,
-  encoding: LegacyEncoding,
-  input_count: 1,
-  output_count: 33,
-  lock_time: 939_066,
-  display_txid_hex: "619122b4146f5edbf49f2e0aaa1380f2b7668cf9e9fc66fd788e791bf954d6da",
-  display_wtxid_hex: None,
-)
+const legacy_v1_fixture =
+  FixtureExpectation(
+    file_name: "legacy-v1.hex",
+    byte_length: 1279,
+    version: 1,
+    encoding: LegacyEncoding,
+    input_count: 1,
+    output_count: 33,
+    lock_time: 939_066,
+    display_txid_hex: "619122b4146f5edbf49f2e0aaa1380f2b7668cf9e9fc66fd788e791bf954d6da",
+    display_wtxid_hex: None,
+  )
 
-const legacy_v2_fixture = FixtureExpectation(
-  file_name: "legacy-v2.hex",
-  byte_length: 189,
-  version: 2,
-  encoding: LegacyEncoding,
-  input_count: 1,
-  output_count: 1,
-  lock_time: 0,
-  display_txid_hex: "05d350c8a65010bbe9d220b2accd7601b4c6541b7c6d7f5ad451efbcc07f8d66",
-  display_wtxid_hex: None,
-)
+const legacy_v2_fixture =
+  FixtureExpectation(
+    file_name: "legacy-v2.hex",
+    byte_length: 189,
+    version: 2,
+    encoding: LegacyEncoding,
+    input_count: 1,
+    output_count: 1,
+    lock_time: 0,
+    display_txid_hex: "05d350c8a65010bbe9d220b2accd7601b4c6541b7c6d7f5ad451efbcc07f8d66",
+    display_wtxid_hex: None,
+  )
 
-const segwit_v1_fixture = FixtureExpectation(
-  file_name: "segwit-v1.hex",
-  byte_length: 372,
-  version: 1,
-  encoding: SegwitEncoding,
-  input_count: 2,
-  output_count: 2,
-  lock_time: 0,
-  display_txid_hex: "632ac65a62740afbb69fdaee8da8cf12ed53e999b76f2713820937fe2ca2a7ff",
-  display_wtxid_hex: Some(
-    "3a6141f6c2c9f64d04f2b2819b2f40ae76ad9a46b541101da745c9056244eb0d",
-  ),
-)
+const segwit_v1_fixture =
+  FixtureExpectation(
+    file_name: "segwit-v1.hex",
+    byte_length: 372,
+    version: 1,
+    encoding: SegwitEncoding,
+    input_count: 2,
+    output_count: 2,
+    lock_time: 0,
+    display_txid_hex: "632ac65a62740afbb69fdaee8da8cf12ed53e999b76f2713820937fe2ca2a7ff",
+    display_wtxid_hex: Some(
+      "3a6141f6c2c9f64d04f2b2819b2f40ae76ad9a46b541101da745c9056244eb0d",
+    ),
+  )
 
-const segwit_single_input_fixture = FixtureExpectation(
-  file_name: "segwit-single-input.hex",
-  byte_length: 225,
-  version: 1,
-  encoding: SegwitEncoding,
-  input_count: 1,
-  output_count: 2,
-  lock_time: 0,
-  display_txid_hex: "c06aaaa2753dc4e74dd4fe817522dc3c126fd71792dd9acfefdaff11f8ff954d",
-  display_wtxid_hex: Some(
-    "f12d56f2234e809129dbf59392961bbe7a89b6250651f6aea7852cc00ced63ff",
-  ),
-)
+const segwit_single_input_fixture =
+  FixtureExpectation(
+    file_name: "segwit-single-input.hex",
+    byte_length: 225,
+    version: 1,
+    encoding: SegwitEncoding,
+    input_count: 1,
+    output_count: 2,
+    lock_time: 0,
+    display_txid_hex: "c06aaaa2753dc4e74dd4fe817522dc3c126fd71792dd9acfefdaff11f8ff954d",
+    display_wtxid_hex: Some(
+      "f12d56f2234e809129dbf59392961bbe7a89b6250651f6aea7852cc00ced63ff",
+    ),
+  )
 
 pub fn deserialize_legacy_v1_fixture_test() {
   assert_fixture_deserializes(legacy_v1_fixture)

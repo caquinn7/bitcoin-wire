@@ -1758,7 +1758,7 @@ fn field_parser(
   parser.from_reader(read_fn, fn(err, start_offset, ctx) {
     err
     |> decode.map_reader_error(UnexpectedEof)
-    |> field_error(field, start_offset, ctx)
+    |> field_error(field, start_offset, ctx)()
   })
 }
 
@@ -1769,7 +1769,7 @@ fn compact_size_parser(
   parser.from_reader(compact_size.read, fn(err, start_offset, ctx) {
     err
     |> decode.map_compact_size_error(UnexpectedEof, NonMinimalCompactSize)
-    |> field_error(field, start_offset, ctx)
+    |> field_error(field, start_offset, ctx)()
   })
 }
 
@@ -1831,7 +1831,7 @@ fn segwit_lookahead_parser() -> Parser(ParseContext, Bool, DecodeError) {
 
           0x00, _ ->
             InvalidSegwitMarkerFlag(marker, flag)
-            |> field_error(SegwitMarkerAndFlag, reader.get_offset(reader), ctx)
+            |> field_error(SegwitMarkerAndFlag, reader.get_offset(reader), ctx)()
             |> Error
 
           _, _ -> Ok(#(reader, False))
@@ -1888,7 +1888,7 @@ fn input_count_parser(
   |> parser.try_with_start_offset(fn(input_count, start_offset, reader, ctx) {
     validate_input_count(input_count, reader, max_input_count_policy, fn(kind) {
       kind
-      |> field_error(InputCount, start_offset, ctx)
+      |> field_error(InputCount, start_offset, ctx)()
       |> Error
     })
   })
@@ -1985,7 +1985,7 @@ fn output_count_parser(
       max_output_count_policy,
       fn(kind) {
         kind
-        |> field_error(OutputCount, start_offset, ctx)
+        |> field_error(OutputCount, start_offset, ctx)()
         |> Error
       },
     )
@@ -2016,7 +2016,7 @@ fn satoshis_parser() -> Parser(ParseContext, Int, DecodeError) {
       value_i64
       |> int64.to_string
       |> IntegerOutOfRange
-      |> field_error(Value, start_offset, ctx)
+      |> field_error(Value, start_offset, ctx)()
     })
   })
 }
@@ -2087,7 +2087,7 @@ fn script_length_parser(
   |> parser.try_with_start_offset(fn(script_length, start_offset, reader, ctx) {
     validate_script_length(script_length, reader, fn(kind) {
       kind
-      |> field_error(field, start_offset, ctx)
+      |> field_error(field, start_offset, ctx)()
       |> Error
     })
   })
@@ -2104,7 +2104,7 @@ fn checked_script_bytes_parser(
   parser.from_reader(reader.read_bytes(_, count), fn(err, start_offset, ctx) {
     err
     |> decode.map_reader_error(UnexpectedEof)
-    |> field_error(field, start_offset, ctx)
+    |> field_error(field, start_offset, ctx)()
   })
 }
 
@@ -2241,7 +2241,7 @@ fn witness_item_count_parser(
     let remaining = reader.bytes_remaining(reader)
     let on_invalid = fn(kind) {
       kind
-      |> field_error(WitnessItemCount, start_offset, ctx)
+      |> field_error(WitnessItemCount, start_offset, ctx)()
       |> Error
     }
 
@@ -2294,7 +2294,7 @@ fn witness_item_length_parser() -> Parser(ParseContext, Int, DecodeError) {
   |> parser.try_with_start_offset(fn(item_length, start_offset, reader, ctx) {
     validate_witness_item_length(item_length, reader, fn(kind) {
       kind
-      |> field_error(WitnessItemLength, start_offset, ctx)
+      |> field_error(WitnessItemLength, start_offset, ctx)()
       |> Error
     })
   })
