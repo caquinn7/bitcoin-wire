@@ -29,6 +29,8 @@ jobs:
 
       - name: Setup runtimes
         uses: ./.github/actions/setup
+        with:
+          gleam_version: "1.19.1"
 
       - name: Check formatting
         working-directory: ${{ matrix.working_directory }}

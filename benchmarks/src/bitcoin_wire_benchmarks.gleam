@@ -3,7 +3,8 @@ import bitcoin_wire_benchmarks/command.{InvalidArguments}
 import gleam/io
 import gleam/string
 
-const usage_msg = "usage:
+const usage_msg =
+  "usage:
   ./benchmarks/run [GLEAM_OPTIONS]
   ./benchmarks/run [GLEAM_OPTIONS] -- [--section <selector>]...
   ./benchmarks/run [GLEAM_OPTIONS] -- [--section <selector>]... --out <path>

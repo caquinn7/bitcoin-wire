@@ -39,7 +39,8 @@ import simplifile
 
 const mainnet_898064_total_size = 1_576_176
 
-const mainnet_898064_label = "mainnet block=898064 transactions=2450 base_size=805947"
+const mainnet_898064_label =
+  "mainnet block=898064 transactions=2450 base_size=805947"
 
 const mainnet_898064_header_label = "mainnet block=898064 header"
 

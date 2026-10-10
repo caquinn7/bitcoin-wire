@@ -36,3 +36,40 @@ jobs:
           else
             gleam test --target erlang
           fi
+
+  build-nested:
+    name: build (${{ matrix.project }}, ${{ matrix.target }})
+    runs-on: ubuntu-latest
+
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - project: fuzz
+            target: erlang
+          - project: fuzz
+            target: javascript
+            js_runtime: node
+          - project: benchmarks
+            target: erlang
+          - project: benchmarks
+            target: javascript
+            js_runtime: node
+          - project: examples
+            target: erlang
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup runtimes
+        uses: ./.github/actions/setup
+        with:
+          js_runtime: ${{ matrix.js_runtime }}
+
+      - name: Download dependencies
+        working-directory: ${{ matrix.project }}
+        run: gleam deps download
+
+      - name: Build project
+        working-directory: ${{ matrix.project }}
+        run: gleam build --target ${{ matrix.target }}

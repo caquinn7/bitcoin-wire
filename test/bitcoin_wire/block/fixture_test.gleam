@@ -25,56 +25,59 @@ type FixtureExpectation {
   )
 }
 
-const mainnet_0_fixture = FixtureExpectation(
-  file_name: "mainnet-0.hex",
-  display_block_hash_hex: "000000000019d6689c085ae165831e934ff763ae46a2a6c172b3f1b60a8ce26f",
-  byte_length: 285,
-  base_size: 285,
-  weight: 1140,
-  virtual_size: 285,
-  version: 1,
-  previous_block_hash_hex: "0000000000000000000000000000000000000000000000000000000000000000",
-  merkle_root_hex: "3ba3edfd7a7b12b27ac72c3e67768f617fc81bc3888a51323a9fb8aa4b1e5e4a",
-  timestamp: 1_231_006_505,
-  target: 486_604_799,
-  nonce: 2_083_236_893,
-  legacy_tx_count: 1,
-  segwit_tx_count: 0,
-)
+const mainnet_0_fixture =
+  FixtureExpectation(
+    file_name: "mainnet-0.hex",
+    display_block_hash_hex: "000000000019d6689c085ae165831e934ff763ae46a2a6c172b3f1b60a8ce26f",
+    byte_length: 285,
+    base_size: 285,
+    weight: 1140,
+    virtual_size: 285,
+    version: 1,
+    previous_block_hash_hex: "0000000000000000000000000000000000000000000000000000000000000000",
+    merkle_root_hex: "3ba3edfd7a7b12b27ac72c3e67768f617fc81bc3888a51323a9fb8aa4b1e5e4a",
+    timestamp: 1_231_006_505,
+    target: 486_604_799,
+    nonce: 2_083_236_893,
+    legacy_tx_count: 1,
+    segwit_tx_count: 0,
+  )
 
-const mainnet_170_fixture = FixtureExpectation(
-  file_name: "mainnet-170.hex",
-  display_block_hash_hex: "00000000d1145790a8694403d4063f323d499e655c83426834d4ce2f8dd4a2ee",
-  byte_length: 490,
-  base_size: 490,
-  weight: 1960,
-  virtual_size: 490,
-  version: 1,
-  previous_block_hash_hex: "55bd840a78798ad0da853f68974f3d183e2bd1db6a842c1feecf222a00000000",
-  merkle_root_hex: "ff104ccb05421ab93e63f8c3ce5c2c2e9dbb37de2764b3a3175c8166562cac7d",
-  timestamp: 1_231_731_025,
-  target: 486_604_799,
-  nonce: 1_889_418_792,
-  legacy_tx_count: 2,
-  segwit_tx_count: 0,
-)
+const mainnet_170_fixture =
+  FixtureExpectation(
+    file_name: "mainnet-170.hex",
+    display_block_hash_hex: "00000000d1145790a8694403d4063f323d499e655c83426834d4ce2f8dd4a2ee",
+    byte_length: 490,
+    base_size: 490,
+    weight: 1960,
+    virtual_size: 490,
+    version: 1,
+    previous_block_hash_hex: "55bd840a78798ad0da853f68974f3d183e2bd1db6a842c1feecf222a00000000",
+    merkle_root_hex: "ff104ccb05421ab93e63f8c3ce5c2c2e9dbb37de2764b3a3175c8166562cac7d",
+    timestamp: 1_231_731_025,
+    target: 486_604_799,
+    nonce: 1_889_418_792,
+    legacy_tx_count: 2,
+    segwit_tx_count: 0,
+  )
 
-const mainnet_519311_fixture = FixtureExpectation(
-  file_name: "mainnet-519311.hex",
-  display_block_hash_hex: "0000000000000000001381004f0bf7b0578189d6853cd8af5098994095213e38",
-  byte_length: 22_884,
-  base_size: 15_613,
-  weight: 69_723,
-  virtual_size: 17_431,
-  version: 536_870_912,
-  previous_block_hash_hex: "90e82ac51d6b37446dc3e6ade48e387a46bcc0b454e126000000000000000000",
-  merkle_root_hex: "1ca2e4bd9b9a855e21e53f9b238a6a0065ec8d4417d8140ce3354159c583ea69",
-  timestamp: 1_524_344_449,
-  target: 390_680_589,
-  nonce: 2_903_091_924,
-  legacy_tx_count: 18,
-  segwit_tx_count: 15,
-)
+const mainnet_519311_fixture =
+  FixtureExpectation(
+    file_name: "mainnet-519311.hex",
+    display_block_hash_hex: "0000000000000000001381004f0bf7b0578189d6853cd8af5098994095213e38",
+    byte_length: 22_884,
+    base_size: 15_613,
+    weight: 69_723,
+    virtual_size: 17_431,
+    version: 536_870_912,
+    previous_block_hash_hex: "90e82ac51d6b37446dc3e6ade48e387a46bcc0b454e126000000000000000000",
+    merkle_root_hex: "1ca2e4bd9b9a855e21e53f9b238a6a0065ec8d4417d8140ce3354159c583ea69",
+    timestamp: 1_524_344_449,
+    target: 390_680_589,
+    nonce: 2_903_091_924,
+    legacy_tx_count: 18,
+    segwit_tx_count: 15,
+  )
 
 pub fn deserialize_mainnet_0_fixture_test() {
   assert_fixture_deserializes(mainnet_0_fixture)

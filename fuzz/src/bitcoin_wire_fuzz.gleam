@@ -3,7 +3,8 @@ import bitcoin_wire_fuzz/command.{InvalidNumberOfArgs}
 import gleam/io
 import gleam/string
 
-const usage_msg = "usage:
+const usage_msg =
+  "usage:
   ./fuzz/run [GLEAM_OPTIONS] -- <suite> <iterations> [seed]
 
 suites:
