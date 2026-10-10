@@ -43,22 +43,18 @@ Run each suite on Erlang explicitly:
 ```
 
 Run each suite on the default JavaScript runtime from
-[`fuzz/gleam.toml`](gleam.toml):
+[`fuzz/gleam.toml`](gleam.toml), which is Node:
 
 ```sh
 ./fuzz/run -t javascript -- transaction <iterations>
 ./fuzz/run -t javascript -- block <iterations>
 ```
 
-Run either suite on a particular JavaScript runtime:
+Run each suite on Node explicitly:
 
 ```sh
 ./fuzz/run -t javascript --runtime node -- transaction <iterations>
 ./fuzz/run -t javascript --runtime node -- block <iterations>
-./fuzz/run -t javascript --runtime deno -- transaction <iterations>
-./fuzz/run -t javascript --runtime deno -- block <iterations>
-./fuzz/run -t javascript --runtime bun -- transaction <iterations>
-./fuzz/run -t javascript --runtime bun -- block <iterations>
 ```
 
 Supply a seed to replay a run:
@@ -77,8 +73,7 @@ the same trace.
 
 The command exits nonzero for invalid arguments or when the selected suite
 records a rescued exception. The
-[fuzz workflow](../.github/workflows/fuzz.yml) runs both suites on Erlang, Node,
-Deno, and Bun.
+[fuzz workflow](../.github/workflows/fuzz.yml) runs both suites on Erlang and Node.
 
 ## Reports and Reproduction
 

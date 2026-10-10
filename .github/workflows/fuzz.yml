@@ -1,6 +1,6 @@
 # Mutation fuzzing runs nightly because block runs are too slow for timely pull
 # request feedback. The deep run executes 1,000,000 transaction iterations and
-# 100,000 block iterations on Erlang, Node, Deno, and Bun, with a 60-minute
+# 100,000 block iterations on Erlang and Node, with a 90-minute
 # timeout. All jobs share the same generated seed so equivalent targets replay
 # the same mutations.
 name: fuzz
@@ -47,26 +47,6 @@ jobs:
             platform: javascript, node
             target: javascript
             js_runtime: node
-            iterations: 100000
-          - suite: transaction
-            platform: javascript, deno
-            target: javascript
-            js_runtime: deno
-            iterations: 1000000
-          - suite: block
-            platform: javascript, deno
-            target: javascript
-            js_runtime: deno
-            iterations: 100000
-          - suite: transaction
-            platform: javascript, bun
-            target: javascript
-            js_runtime: bun
-            iterations: 1000000
-          - suite: block
-            platform: javascript, bun
-            target: javascript
-            js_runtime: bun
             iterations: 100000
 
     steps:

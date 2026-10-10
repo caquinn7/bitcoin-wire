@@ -105,10 +105,6 @@ Use these terms consistently across the public API and internal implementation:
 - `gleam test -t erlang` - run the test suite on the Erlang target.
 - `gleam test -t javascript --runtime node` - run the test suite on JavaScript
   using Node.
-- `gleam test -t javascript --runtime deno` - run the test suite on JavaScript
-  using Deno.
-- `gleam test -t javascript --runtime bun` - run the test suite on JavaScript
-  using Bun.
 - See `fuzz/README.md` for fuzz commands, seed replay, scope, and target/runtime
   guidance. Run a selected suite with
   `./fuzz/run -- <suite> <iterations> [seed]`;
@@ -122,20 +118,18 @@ Use these terms consistently across the public API and internal implementation:
   the invoking checkout's harness for both variants, accepts dirty worktrees
   while recording their state, and leaves both worktrees unchanged.
 
-Run unit tests on both Erlang and at least one JavaScript runtime for meaningful
-library code changes; the number of target-specific tests is small, but almost
-all tests run on every target. Changes confined to the fuzz or standalone
+Run unit tests on both Erlang and Node for meaningful library code changes; the
+number of target-specific tests is small, but almost all tests run on every
+target. Changes confined to the fuzz or standalone
 benchmark harnesses do not require running the unit test suite; validate the
 affected harness directly on the appropriate targets and runtimes instead. Run
 unit tests when the same change also touches library code or shared behavior
 covered by those tests.
-Run all JavaScript runtimes before publishing a package release, changing public
-API behavior, or touching runtime-sensitive code such as `BitArray`, fixed-width
-integers, CompactSize, serialization, hashing, or FFI.
-Use Node as the default JavaScript runtime for fuzz and performance validation.
-Also use Deno and Bun when a harness change touches JavaScript FFI,
-runtime-sensitive `BitArray` or integer behavior, runtime configuration,
-file/timer/CLI behavior, or a runtime-specific bug.
+Erlang and Node are the supported runtimes. Run unit tests on both before
+publishing a package release, changing public API behavior, or touching
+runtime-sensitive code such as `BitArray`, fixed-width integers, CompactSize,
+serialization, hashing, or FFI.
+Use Node for JavaScript fuzz and performance validation.
 
 ## Correctness Invariants
 
