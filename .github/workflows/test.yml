@@ -17,10 +17,6 @@ jobs:
           - target: erlang
           - target: javascript
             js_runtime: node
-          - target: javascript
-            js_runtime: deno
-          - target: javascript
-            js_runtime: bun
 
     steps:
       - uses: actions/checkout@v4

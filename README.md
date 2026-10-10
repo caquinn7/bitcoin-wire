@@ -52,12 +52,12 @@ gleam add bitcoin_wire@1
 
 ### Cross-runtime portability
 
-> Public behavior remains consistent across Erlang and the supported
-> server-side JavaScript runtimes: Node.js, Deno, and Bun.
+> Public behavior remains consistent across the supported runtimes:
+> Erlang and Node.js.
 
 Native browser builds are not currently supported. The JavaScript hashing
-implementation imports `node:crypto`, which is available through the supported
-runtimes but not through native browser APIs.
+implementation imports `node:crypto`, which is available in Node.js but not
+through native browser APIs.
 
 ## Scope
 
@@ -83,13 +83,11 @@ No security guarantees are provided.
 
 ## Development
 
-Run the unit tests on Erlang and the supported JavaScript runtimes:
+Run the unit tests on Erlang and Node.js:
 
 ```sh
 gleam test -t erlang
 gleam test -t javascript --runtime node
-gleam test -t javascript --runtime deno
-gleam test -t javascript --runtime bun
 ```
 
 ### Fuzz Testing

@@ -121,12 +121,10 @@ which is Node:
 ./benchmarks/run --target javascript
 ```
 
-Run it on a specific JavaScript runtime:
+Run it on Node explicitly:
 
 ```sh
 ./benchmarks/run --target javascript --runtime node
-./benchmarks/run --target javascript --runtime deno
-./benchmarks/run --target javascript --runtime bun
 ```
 
 The command exits with a nonzero status when its arguments are invalid or a
@@ -163,8 +161,8 @@ but its results are not completely reproducible from the recorded commit.
 At least one repeatable `--section` selector is required unless
 `--all-sections` is supplied. The selector rules are the same as for
 `./benchmarks/run`. Erlang is the default target. JavaScript defaults to Node;
-`--runtime` is valid only with the JavaScript target. Select another installed
-JavaScript runtime explicitly when needed:
+`--runtime` is valid only with the JavaScript target. Run a comparison on Node
+explicitly:
 
 ```sh
 python3 benchmarks/scripts/compare.py \
@@ -173,7 +171,7 @@ python3 benchmarks/scripts/compare.py \
   --section transaction.deserialize \
   --section transaction.serialize.fixtures \
   --target javascript \
-  --runtime deno
+  --runtime node
 ```
 
 The default is four trials for each variant: four baseline runs and four
