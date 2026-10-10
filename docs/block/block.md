@@ -160,10 +160,20 @@ Deserialization produces a `Block(Parsed)`. Pass that block and the intended
 network's proof-of-work limit to `validate_context_free_consensus` to obtain a
 `Block(ContextFreeValidated)`:
 
-For mainnet, supply its maximum target as 32 little-endian bytes:
+For mainnet, supply its maximum target as 32 little-endian bytes: 28 `0xFF`
+bytes followed by four zero bytes.
 
 ```gleam
-let mainnet_pow_limit_le = <<0:size(208), 0xFF, 0xFF, 0:size(32)>>
+let mainnet_pow_limit_le = <<
+  0xFFFFFFFF:32-little,
+  0xFFFFFFFF:32-little,
+  0xFFFFFFFF:32-little,
+  0xFFFFFFFF:32-little,
+  0xFFFFFFFF:32-little,
+  0xFFFFFFFF:32-little,
+  0xFFFFFFFF:32-little,
+  0:32-little,
+>>
 let assert Ok(pow_limit) = block.new_pow_limit(mainnet_pow_limit_le)
 let assert Ok(validated_block) =
   block.validate_context_free_consensus(parsed_block, pow_limit)
@@ -193,6 +203,6 @@ block-solution validation are also outside its scope.
 
 ## Documentation
 
-- [Merkle root](merkle_root.md)
+- [Merkle roots](https://github.com/caquinn7/bitcoin-wire/blob/main/docs/block/merkle_root.md)
 - [Transaction domain](https://github.com/caquinn7/bitcoin-wire/blob/main/docs/transaction/transaction.md)
 - [Project overview](https://github.com/caquinn7/bitcoin-wire)
