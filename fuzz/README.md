@@ -72,8 +72,7 @@ range `1..2_147_483_646`, so aliases such as `0` and `1` intentionally produce
 the same trace.
 
 The command exits nonzero for invalid arguments or when the selected suite
-records a rescued exception. The
-[fuzz workflow](../.github/workflows/fuzz.yml) runs both suites on Erlang and Node.
+records a rescued exception.
 
 ## Reports and Reproduction
 

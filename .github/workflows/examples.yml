@@ -1,0 +1,44 @@
+name: examples
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+
+jobs:
+  format:
+    name: examples format
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup formatter
+        uses: ./.github/actions/setup
+        with:
+          gleam_version: "1.19.1"
+
+      - name: Check formatting
+        working-directory: examples
+        run: gleam format --check
+
+  build:
+    name: examples build (erlang)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup runtimes
+        uses: ./.github/actions/setup
+
+      - name: Download dependencies
+        working-directory: examples
+        run: gleam deps download
+
+      - name: Build project
+        working-directory: examples
+        run: gleam build --target erlang
