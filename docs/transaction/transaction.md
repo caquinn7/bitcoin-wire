@@ -117,6 +117,20 @@ These limits constrain decoding resources, not consensus validity. A parsed
 transaction has not passed script execution or context-free consensus checks,
 and a strict custom policy can reject consensus-valid transactions.
 
+## Context-Free Consensus Validation
+
+Deserialization produces a `Transaction(Parsed)`. Pass that transaction to
+`validate_context_free_consensus` to obtain a
+`Transaction(ContextFreeValidated)`:
+
+```gleam
+let assert Ok(validated_transaction) =
+  transaction.validate_context_free_consensus(parsed_transaction)
+```
+
+On failure, `Error(violations)` contains a list of `ConsensusViolation` values.
+Independent violations are collected in deterministic validation order.
+
 ## Scope
 
 The module performs whole-value deserialization, structural inspection,
