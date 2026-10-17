@@ -6,6 +6,8 @@ import gleam/httpc
 import gleam/int
 import gleam/result
 
+const host = "mempool.space"
+
 pub type RequestError {
   HttpError(httpc.HttpError)
   StatusCodeError(Int)
@@ -25,9 +27,9 @@ pub fn get_raw_block(block_hash: String) -> Result(BitArray, RequestError) {
 
 pub fn error_message(error: RequestError) -> String {
   case error {
-    HttpError(_) -> "mempool.space request failed"
+    HttpError(_) -> host <> " request failed"
     StatusCodeError(status) ->
-      "mempool.space returned HTTP " <> int.to_string(status)
+      host <> " returned HTTP " <> int.to_string(status)
   }
 }
 
@@ -50,7 +52,7 @@ fn get_string(path: String) -> Result(String, RequestError) {
 
 fn new_request(path: String) -> Request(String) {
   request.new()
-  |> request.set_host("mempool.space")
+  |> request.set_host(host)
   |> request.set_path(path)
 }
 

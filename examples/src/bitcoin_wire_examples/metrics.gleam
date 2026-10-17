@@ -172,10 +172,14 @@ fn output_metrics(outputs: List(transaction.Output)) -> OutputMetrics {
     OutputMetrics(0, 0, empty_output_script_counts()),
     fn(metrics, output) {
       let script = transaction.get_output_script_pubkey(output)
+      // Erlang's arbitrary-precision Int preserves each amount and the total.
+      let assert Ok(value) =
+        output
+        |> transaction.get_output_value
+        |> transaction.output_value_to_int
 
       OutputMetrics(
-        total_output_satoshis: metrics.total_output_satoshis
-          + transaction.get_output_value(output),
+        total_output_satoshis: metrics.total_output_satoshis + value,
         script_bytes: metrics.script_bytes + transaction.get_script_size(script),
         script_counts: increment_script_count(
           metrics.script_counts,

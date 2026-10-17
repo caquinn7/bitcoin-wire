@@ -232,12 +232,15 @@ fn transaction_violation(value: transaction.ConsensusViolation) -> Json {
         #("kind", json.string("base_size_limit_exceeded")),
         #("size", json.int(size)),
       ])
-    transaction.OutputValueOutOfRange(index, value) ->
+    transaction.OutputValueOutOfRange(index, value) -> {
+      // The examples target Erlang, so this conversion always preserves value.
+      let assert Ok(value) = transaction.output_value_to_int(value)
       json.object([
         #("kind", json.string("output_value_out_of_range")),
         #("index", json.int(index)),
         #("value_satoshis", json.int(value)),
       ])
+    }
     transaction.TotalOutputValueOutOfRange(index, total) ->
       json.object([
         #("kind", json.string("total_output_value_out_of_range")),

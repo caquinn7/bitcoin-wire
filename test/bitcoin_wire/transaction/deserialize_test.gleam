@@ -725,9 +725,10 @@ pub fn deserialize_preserves_single_output_test() {
   let outputs = transaction.get_outputs(tx)
   let assert [first_output] = outputs
 
-  let actual_value =
+  let assert Ok(actual_value) =
     first_output
     |> transaction.get_output_value
+    |> transaction.output_value_to_int
 
   assert actual_value == value_satoshis
 
@@ -755,8 +756,14 @@ pub fn deserialize_preserves_one_satoshi_output_from_one_bit_offset_test() {
   let assert [aligned_output] = transaction.get_outputs(aligned_tx)
   let assert [offset_output] = transaction.get_outputs(offset_tx)
 
-  assert transaction.get_output_value(aligned_output) == 1
-  assert transaction.get_output_value(offset_output) == 1
+  assert transaction.output_value_to_int(transaction.get_output_value(
+      aligned_output,
+    ))
+    == Ok(1)
+  assert transaction.output_value_to_int(transaction.get_output_value(
+      offset_output,
+    ))
+    == Ok(1)
   assert transaction.serialize(offset_tx) == tx_bytes
 }
 
@@ -792,9 +799,10 @@ pub fn deserialize_preserves_multiple_outputs_test() {
   let outputs = transaction.get_outputs(tx)
   let assert [output1, output2, output3] = outputs
 
-  let actual_value1 =
+  let assert Ok(actual_value1) =
     output1
     |> transaction.get_output_value
+    |> transaction.output_value_to_int
 
   assert actual_value1 == 0
 
@@ -805,9 +813,10 @@ pub fn deserialize_preserves_multiple_outputs_test() {
 
   assert actual_script1_bytes == script1_bytes
 
-  let actual_value2 =
+  let assert Ok(actual_value2) =
     output2
     |> transaction.get_output_value
+    |> transaction.output_value_to_int
 
   assert actual_value2 == 100_000_000
 
@@ -818,9 +827,10 @@ pub fn deserialize_preserves_multiple_outputs_test() {
 
   assert actual_script2_bytes == script2_bytes
 
-  let actual_value3 =
+  let assert Ok(actual_value3) =
     output3
     |> transaction.get_output_value
+    |> transaction.output_value_to_int
 
   assert actual_value3 == 50_000_000
 
@@ -854,9 +864,10 @@ pub fn deserialize_preserves_empty_scriptpubkey_test() {
   let outputs = transaction.get_outputs(tx)
   let assert [first_output] = outputs
 
-  let actual_value =
+  let assert Ok(actual_value) =
     first_output
     |> transaction.get_output_value
+    |> transaction.output_value_to_int
 
   assert actual_value == value_satoshis
 
@@ -866,103 +877,6 @@ pub fn deserialize_preserves_empty_scriptpubkey_test() {
     |> transaction.get_raw_script_bytes
 
   assert actual_script_pubkey_bytes == <<>>
-}
-
-pub fn deserialize_checks_output_values_at_safe_integer_boundaries_test() {
-  let boundaries = [
-    #(<<0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0x1F, 0>>, "9007199254740991", True),
-    #(<<0x01, 0, 0, 0, 0, 0, 0xE0, 0xFF>>, "-9007199254740991", True),
-    #(<<0, 0, 0, 0, 0, 0, 0x20, 0>>, "9007199254740992", False),
-    #(<<0, 0, 0, 0, 0, 0, 0xE0, 0xFF>>, "-9007199254740992", False),
-    #(<<0x01, 0, 0, 0, 0, 0, 0x20, 0>>, "9007199254740993", False),
-    #(
-      <<0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xDF, 0xFF>>,
-      "-9007199254740993",
-      False,
-    ),
-  ]
-
-  list.each(boundaries, fn(boundary) {
-    let #(value_bytes, decimal, is_safe_on_javascript) = boundary
-    let bytes = <<
-      bitcoin_wire.transaction_version_1_bytes:bits,
-      bitcoin_wire.build_minimal_input_section_bytes():bits,
-      1,
-      bitcoin_wire.build_output_bytes(value_bytes, <<>>):bits,
-      0:32-little,
-    >>
-
-    case target.is_javascript() && !is_safe_on_javascript {
-      True -> {
-        let assert Error(error) = transaction.deserialize(bytes)
-        assert decode_assertions.check_transaction_decode_error(
-            error,
-            47,
-            "transaction.outputs[0].value",
-          )
-          == IntegerOutOfRange(decimal)
-      }
-      False -> {
-        let assert Ok(tx) = transaction.deserialize(bytes)
-        let assert [output] = transaction.get_outputs(tx)
-        let assert Ok(expected_value) = int.parse(decimal)
-        assert transaction.get_output_value(output) == expected_value
-        assert transaction.serialize(tx) == bytes
-      }
-    }
-  })
-}
-
-pub fn deserialize_handles_output_value_min_i64_for_target_test() {
-  // Create an output with value = minimum i64 (-9223372036854775808)
-  // This value exceeds JavaScript's MIN_SAFE_INTEGER, so conversion fails.
-
-  let output_count = bitcoin_wire.compact_size(1)
-
-  // Minimum i64: sign bit set, all other bits clear
-  let value_min_i64 = <<0, 0, 0, 0, 0, 0, 0, 0x80>>
-
-  let script_pubkey_length = bitcoin_wire.compact_size(0)
-
-  let output_bytes = <<
-    value_min_i64:bits,
-    script_pubkey_length:bits,
-  >>
-  let lock_time = <<0:little-size(32)>>
-
-  let tx_bytes = <<
-    bitcoin_wire.transaction_version_1_bytes:bits,
-    bitcoin_wire.build_minimal_input_section_bytes():bits,
-    output_count:bits,
-    output_bytes:bits,
-    lock_time:bits,
-  >>
-
-  case target.is_javascript() {
-    True -> {
-      let assert Error(decode_err) = transaction.deserialize(tx_bytes)
-
-      assert decode_assertions.check_transaction_decode_error(
-          decode_err,
-          47,
-          "transaction.outputs[0].value",
-        )
-        == IntegerOutOfRange("-9223372036854775808")
-    }
-
-    False -> {
-      let min_i64_output_value = {
-        // Compute from smaller literals to avoid JavaScript truncation warning
-        let two_to_31 = 2_147_483_648
-        let two_to_32 = 4_294_967_296
-        0 - two_to_31 * two_to_32
-      }
-
-      let assert Ok(tx) = transaction.deserialize(tx_bytes)
-      let assert [output] = transaction.get_outputs(tx)
-      assert transaction.get_output_value(output) == min_i64_output_value
-    }
-  }
 }
 
 pub fn deserialize_rejects_scriptpubkey_length_exceeding_remaining_bytes_test() {

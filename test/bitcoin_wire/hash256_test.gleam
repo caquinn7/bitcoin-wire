@@ -1,5 +1,6 @@
 import bitcoin_wire/hash256.{InvalidBitCount}
 import gleam/string
+import support/offset_bit_array
 
 pub fn from_bytes_le_reports_incorrect_bit_counts_test() {
   assert Error(InvalidBitCount(actual: 0, expected: 256))
@@ -22,9 +23,50 @@ pub fn from_bytes_le_returns_ok_when_input_is_32_bytes_test() {
   let assert Ok(_) = hash256.from_bytes_le(<<1:little-size({ 32 * 8 })>>)
 }
 
-pub fn to_bytes_le_returns_original_bytes_test() {
+pub fn to_bytes_le_preserves_original_bytes_test() {
   let bytes = <<1:little-size({ 32 * 8 })>>
   let assert Ok(hash) = hash256.from_bytes_le(bytes)
+
+  assert hash256.to_bytes_le(hash) == bytes
+}
+
+pub fn to_bytes_le_preserves_offset_bytes_test() {
+  let bytes = <<
+    0x00,
+    0x01,
+    0x02,
+    0x03,
+    0x04,
+    0x05,
+    0x06,
+    0x07,
+    0x08,
+    0x09,
+    0x0A,
+    0x0B,
+    0x0C,
+    0x0D,
+    0x0E,
+    0x0F,
+    0x10,
+    0x11,
+    0x12,
+    0x13,
+    0x14,
+    0x15,
+    0x16,
+    0x17,
+    0x18,
+    0x19,
+    0x1A,
+    0x1B,
+    0x1C,
+    0x1D,
+    0x1E,
+    0x1F,
+  >>
+  let view = offset_bit_array.with_one_bit_offset(bytes)
+  let assert Ok(hash) = hash256.from_bytes_le(view)
 
   assert hash256.to_bytes_le(hash) == bytes
 }

@@ -57,9 +57,14 @@ fn input(value: transaction.Input) -> Json {
 
 fn output(value: transaction.Output) -> Json {
   let script_pubkey = transaction.get_output_script_pubkey(value)
+  // These examples run on Erlang, where every signed 64-bit value fits in Int.
+  let assert Ok(value_satoshis) =
+    value
+    |> transaction.get_output_value
+    |> transaction.output_value_to_int
 
   json.object([
-    #("value_satoshis", json.int(transaction.get_output_value(value))),
+    #("value_satoshis", json.int(value_satoshis)),
     #(
       "script_pubkey",
       json.object([

@@ -55,6 +55,23 @@ pub fn from_bytes_le_returns_ok_when_input_is_8_bytes_test() {
   let assert Ok(_) = int64.from_bytes_le(shared_inputs.one_bytes)
 }
 
+// to_bytes_le
+
+pub fn to_bytes_le_preserves_bytes_test() {
+  let bytes = <<0x01, 0x23, 0x45, 0x67, 0x89, 0xAB, 0xCD, 0xEF>>
+  let assert Ok(value) = int64.from_bytes_le(bytes)
+
+  assert int64.to_bytes_le(value) == bytes
+}
+
+pub fn to_bytes_le_preserves_offset_bytes_test() {
+  let bytes = <<0x01, 0x23, 0x45, 0x67, 0x89, 0xAB, 0xCD, 0xEF>>
+  let view = offset_bit_array.with_one_bit_offset(bytes)
+  let assert Ok(value) = int64.from_bytes_le(view)
+
+  assert int64.to_bytes_le(value) == bytes
+}
+
 // to_int
 
 pub fn to_int_max_i64_test() {

@@ -1227,6 +1227,7 @@ pub type PowLimitError {
 pub fn new_pow_limit(bytes: BitArray) -> Result(PowLimit, PowLimitError) {
   bytes
   |> pow_target.from_bytes_le
+  |> result.map(PowLimit)
   |> result.map_error(fn(err) {
     case err {
       pow_target.InvalidBitCount(actual:, expected:) ->
@@ -1245,7 +1246,6 @@ pub fn new_pow_limit(bytes: BitArray) -> Result(PowLimit, PowLimitError) {
         panic as "a 32-byte proof-of-work limit cannot overflow 256 bits"
     }
   })
-  |> result.map(PowLimit)
 }
 
 /// Validate a block against context-free Bitcoin consensus rules.

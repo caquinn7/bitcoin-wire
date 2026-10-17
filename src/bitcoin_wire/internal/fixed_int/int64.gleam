@@ -54,6 +54,11 @@ pub fn from_bytes_le(bytes: BitArray) -> Result(Int64, FromBytesError) {
   }
 }
 
+/// Return the exact 8-byte little-endian representation of the value.
+pub fn to_bytes_le(value: Int64) -> BitArray {
+  value.bytes_le
+}
+
 /// Attempts to convert the value to an `Int`.
 ///
 /// **Target-specific behavior:**
