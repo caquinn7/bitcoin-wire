@@ -45,7 +45,7 @@ pub type ContextFreeValidated =
 /// (pre-SegWit) or SegWit, which affects whether witness data is present
 /// in the serialized structure.
 pub opaque type Transaction(state) {
-  Legacy(
+  Transaction(
     /// The unsigned 32-bit transaction version.
     version: Int,
     /// The number of transaction inputs.
@@ -58,23 +58,17 @@ pub opaque type Transaction(state) {
     outputs: List(Output),
     /// The unsigned 32-bit lock-time value.
     lock_time: Int,
+    /// The wire encoding, including witness stacks for SegWit transactions.
+    encoding: Encoding,
   )
-  Segwit(
-    /// The unsigned 32-bit transaction version.
-    version: Int,
-    /// The number of transaction inputs.
-    input_count: Int,
-    /// The transaction inputs in wire order.
-    inputs: List(Input),
-    /// The number of transaction outputs.
-    output_count: Int,
-    /// The transaction outputs in wire order.
-    outputs: List(Output),
-    /// The unsigned 32-bit lock-time value.
-    lock_time: Int,
-    /// One witness stack per input, in input order.
-    witnesses: List(WitnessStack),
-  )
+}
+
+/// The transaction's wire encoding. The parser ensures that SegWit transactions
+/// have one witness stack per input and at least one item across all stacks.
+type Encoding {
+  Legacy
+  /// Contains one witness stack per input, in input order.
+  Segwit(List(WitnessStack))
 }
 
 /// Get the transaction version.
@@ -102,9 +96,9 @@ pub fn get_version(tx: Transaction(state)) -> Int {
 ///
 /// Returns `True` for SegWit transactions, `False` for legacy transactions.
 pub fn is_segwit(tx: Transaction(state)) -> Bool {
-  case tx {
-    Legacy(..) -> False
-    Segwit(..) -> True
+  case tx.encoding {
+    Legacy -> False
+    Segwit(_) -> True
   }
 }
 
@@ -186,9 +180,9 @@ pub fn get_lock_time(tx: Transaction(state)) -> Int {
 pub fn get_witnesses(
   tx: Transaction(state),
 ) -> Result(List(WitnessStack), Nil) {
-  case tx {
-    Segwit(witnesses:, ..) -> Ok(witnesses)
-    Legacy(..) -> Error(Nil)
+  case tx.encoding {
+    Segwit(witnesses) -> Ok(witnesses)
+    Legacy -> Error(Nil)
   }
 }
 
@@ -266,9 +260,9 @@ fn compute_outputs_stripped_size_loop(outputs: List(Output), acc: Int) -> Int {
 /// This calculation measures the existing transaction fields without allocating
 /// a serialized `BitArray`.
 pub fn compute_total_size(tx: Transaction(state)) -> Int {
-  case tx {
-    Legacy(..) -> compute_base_size(tx)
-    Segwit(witnesses:, ..) -> {
+  case tx.encoding {
+    Legacy -> compute_base_size(tx)
+    Segwit(witnesses) -> {
       let segwit_marker_and_flag_size = 2
 
       compute_base_size(tx)
@@ -293,9 +287,9 @@ pub fn compute_weight(tx: Transaction(state)) -> Int {
   let witness_scale_factor = 4
   let base_size = compute_base_size(tx)
 
-  case tx {
-    Legacy(..) -> base_size * witness_scale_factor
-    Segwit(witnesses:, ..) -> {
+  case tx.encoding {
+    Legacy -> base_size * witness_scale_factor
+    Segwit(witnesses) -> {
       let segwit_marker_and_flag_size = 2
 
       base_size
@@ -333,9 +327,9 @@ pub fn compute_virtual_size(tx: Transaction(state)) -> Int {
 /// This internal helper is used when calculating block weight during validation.
 @internal
 pub fn compute_witness_serialized_size(tx: Transaction(state)) -> Int {
-  case tx {
-    Legacy(..) -> 0
-    Segwit(witnesses:, ..) -> {
+  case tx.encoding {
+    Legacy -> 0
+    Segwit(witnesses) -> {
       let segwit_marker_and_flag_size = 2
       segwit_marker_and_flag_size + compute_witnesses_size(witnesses)
     }
@@ -1703,35 +1697,22 @@ fn tx_body_parser(
   use inputs <- parser.then(inputs_parser(input_count))
   use output_count <- parser.then(output_count_parser(policy.max_output_count))
   use outputs <- parser.then(outputs_parser(output_count))
-  use witnesses <- parser.then(witnesses_if_segwit_parser(
+  use encoding <- parser.then(encoding_parser(
     is_segwit,
     input_count,
     policy.max_witness_item_count,
   ))
   use lock_time <- parser.then(field_parser(LockTime, reader.read_u32_le))
 
-  parser.return(case witnesses {
-    Some(witnesses) ->
-      Segwit(
-        version:,
-        input_count:,
-        inputs:,
-        output_count:,
-        outputs:,
-        lock_time:,
-        witnesses:,
-      )
-
-    None ->
-      Legacy(
-        version:,
-        input_count:,
-        inputs:,
-        output_count:,
-        outputs:,
-        lock_time:,
-      )
-  })
+  parser.return(Transaction(
+    version:,
+    input_count:,
+    inputs:,
+    output_count:,
+    outputs:,
+    lock_time:,
+    encoding:,
+  ))
 }
 
 fn end_of_tx_parser() -> Parser(ParseContext, Nil, DecodeError) {
@@ -2121,18 +2102,18 @@ fn validate_script_length(
 // Witness Parsing
 // ==============================================================================
 
-fn witnesses_if_segwit_parser(
+fn encoding_parser(
   is_segwit: Bool,
   input_count: Int,
   max_witness_item_count_policy: Int,
-) -> Parser(ParseContext, Option(List(WitnessStack)), DecodeError) {
+) -> Parser(ParseContext, Encoding, DecodeError) {
   case is_segwit {
     True ->
       input_count
       |> witnesses_parser(max_witness_item_count_policy)
-      |> parser.map(Some)
+      |> parser.map(Segwit)
 
-    False -> parser.return(None)
+    False -> parser.return(Legacy)
   }
 }
 
@@ -2447,18 +2428,9 @@ pub fn validate_context_free_consensus(
     })
 
   case violations {
-    [] -> Ok(mark_as_context_free_validated(tx))
+    // Record update with a field re-supplied changes only the phantom state.
+    [] -> Ok(Transaction(..tx, encoding: tx.encoding))
     _ -> Error(violations)
-  }
-}
-
-fn mark_as_context_free_validated(
-  tx: Transaction(Parsed),
-) -> Transaction(ContextFreeValidated) {
-  // Change the phantom type by reconstructing with identical data.
-  case tx {
-    Legacy(v, ic, i, oc, o, l) -> Legacy(v, ic, i, oc, o, l)
-    Segwit(v, ic, i, oc, o, l, w) -> Segwit(v, ic, i, oc, o, l, w)
   }
 }
 
@@ -2724,18 +2696,17 @@ fn collect_output_parts(
 /// - `serialize_stripped` — the no-witness serialization used for the txid
 pub fn serialize(tx: Transaction(state)) -> BitArray {
   let parts = [<<tx.lock_time:32-little>>]
-  let parts = case tx {
-    Legacy(..) -> parts
-    Segwit(witnesses:, ..) ->
-      collect_witness_parts(list.reverse(witnesses), parts)
+  let parts = case tx.encoding {
+    Legacy -> parts
+    Segwit(witnesses) -> collect_witness_parts(list.reverse(witnesses), parts)
   }
   let parts = collect_output_parts(list.reverse(tx.outputs), parts)
   let parts = [compact_size.encode_int(tx.output_count), ..parts]
   let parts = collect_input_parts(list.reverse(tx.inputs), parts)
   let parts = [compact_size.encode_int(tx.input_count), ..parts]
-  let parts = case tx {
-    Legacy(..) -> parts
-    Segwit(..) -> [<<0x00, 0x01>>, ..parts]
+  let parts = case tx.encoding {
+    Legacy -> parts
+    Segwit(_) -> [<<0x00, 0x01>>, ..parts]
   }
   let parts = [<<tx.version:32-little>>, ..parts]
   bit_array.concat(parts)

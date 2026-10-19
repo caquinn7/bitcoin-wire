@@ -221,7 +221,8 @@ pub fn validate_context_free_consensus_segwit_v1_fixture_test() {
   assert_fixture_validates_context_free(segwit_v1_fixture)
 }
 
-/// Validate a fixture and ensure the phantom-state upgrade preserves serialization.
+/// Validate a fixture and ensure the phantom-state upgrade preserves its encoding,
+/// witness stacks, and serialization.
 fn assert_fixture_validates_context_free(
   expectation: FixtureExpectation,
 ) -> Nil {
@@ -229,6 +230,9 @@ fn assert_fixture_validates_context_free(
   let serialized_before_validation = transaction.serialize(tx)
   let assert Ok(validated_tx) = transaction.validate_context_free_consensus(tx)
 
+  assert transaction.is_segwit(validated_tx) == transaction.is_segwit(tx)
+  assert transaction.get_witnesses(validated_tx)
+    == transaction.get_witnesses(tx)
   assert transaction.serialize(validated_tx) == serialized_before_validation
 }
 
