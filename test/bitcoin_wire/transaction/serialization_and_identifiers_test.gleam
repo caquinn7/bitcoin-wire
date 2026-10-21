@@ -1,8 +1,8 @@
 import bitcoin_wire/hash256
 import bitcoin_wire/transaction.{NoOutputs}
 import gleam/bit_array
-import gleam/crypto.{Sha256}
 import support/bitcoin_wire
+import support/crypto.{dsha256}
 
 // ============================================================================
 // Transaction size and weight computation
@@ -201,15 +201,8 @@ pub fn serialize_and_hashing_accept_context_free_invalid_segwit_tx_test() {
   assert transaction.serialize_stripped(tx) == stripped_bytes
   assert transaction.serialize(tx) == wire_bytes
 
-  let expected_txid =
-    stripped_bytes
-    |> crypto.hash(Sha256, _)
-    |> crypto.hash(Sha256, _)
-
-  let expected_wtxid =
-    wire_bytes
-    |> crypto.hash(Sha256, _)
-    |> crypto.hash(Sha256, _)
+  let expected_txid = dsha256(stripped_bytes)
+  let expected_wtxid = dsha256(wire_bytes)
 
   assert tx
     |> transaction.compute_txid
@@ -248,10 +241,7 @@ pub fn compute_txid_matches_manual_dsha256_test() {
     lock_time:bits,
   >>
 
-  let expected_txid =
-    tx_bytes
-    |> crypto.hash(Sha256, _)
-    |> crypto.hash(Sha256, _)
+  let expected_txid = dsha256(tx_bytes)
 
   let assert Ok(tx) = transaction.deserialize(tx_bytes)
   let txid = transaction.compute_txid(tx)
@@ -283,10 +273,7 @@ pub fn compute_wtxid_matches_manual_dsha256_test() {
     ])
 
   // wtxid hashes extended serialization, including witness data.
-  let expected_wtxid =
-    tx_bytes
-    |> crypto.hash(Sha256, _)
-    |> crypto.hash(Sha256, _)
+  let expected_wtxid = dsha256(tx_bytes)
 
   let assert Ok(tx) = transaction.deserialize(tx_bytes)
   let wtxid = transaction.compute_wtxid(tx)

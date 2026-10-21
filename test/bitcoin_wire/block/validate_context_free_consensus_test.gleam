@@ -11,10 +11,10 @@ import bitcoin_wire/transaction.{
   NoOutputs,
 }
 import gleam/bit_array
-import gleam/crypto.{Sha256}
 import gleam/int
 import gleam/list
 import support/bitcoin_wire
+import support/crypto.{dsha256}
 
 const regtest_pow_limit_bytes = <<
   0xFF,
@@ -867,12 +867,6 @@ fn compute_merkle_root_from_hashes(hashes: List(BitArray)) -> BitArray {
       })
       |> compute_merkle_root_from_hashes
   }
-}
-
-fn dsha256(bytes: BitArray) -> BitArray {
-  bytes
-  |> crypto.hash(Sha256, _)
-  |> crypto.hash(Sha256, _)
 }
 
 fn build_valid_legacy_transaction_bytes(

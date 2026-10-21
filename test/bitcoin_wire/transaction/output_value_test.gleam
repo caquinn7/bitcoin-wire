@@ -3,10 +3,10 @@ import bitcoin_wire/transaction.{
   type OutputValue, DuplicateInput, OutputValueOutOfRange,
   TotalOutputValueOutOfRange,
 }
-import gleam/crypto.{Sha256}
 import gleam/int
 import gleam/list
 import support/bitcoin_wire
+import support/crypto.{dsha256}
 import support/offset_bit_array
 import support/target
 
@@ -239,10 +239,4 @@ pub fn extreme_output_failure_keeps_first_amount_and_other_violation_order_test(
     transaction.validate_context_free_consensus(tx)
 
   assert transaction.output_value_to_bytes_le(value) == min_i64
-}
-
-fn dsha256(bytes: BitArray) -> BitArray {
-  bytes
-  |> crypto.hash(Sha256, _)
-  |> crypto.hash(Sha256, _)
 }

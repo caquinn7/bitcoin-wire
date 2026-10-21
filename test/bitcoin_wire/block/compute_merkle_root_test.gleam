@@ -2,11 +2,11 @@ import bitcoin_wire/block.{type Block, type Parsed, Mutated, NonMutated}
 import bitcoin_wire/hash256
 import bitcoin_wire/transaction
 import gleam/bit_array
-import gleam/crypto.{Sha256}
 import gleam/list
 import gleam/string
 import simplifile
 import support/bitcoin_wire
+import support/crypto.{dsha256}
 
 // ============================================================================
 // Core computation
@@ -269,10 +269,4 @@ fn assert_mutated_merkle_root(
 
   assert bit_array.byte_size(expected_root) == 32
   assert computed_root == Mutated(expected_hash)
-}
-
-fn dsha256(bytes: BitArray) -> BitArray {
-  bytes
-  |> crypto.hash(Sha256, _)
-  |> crypto.hash(Sha256, _)
 }
