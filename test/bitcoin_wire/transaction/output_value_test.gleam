@@ -10,52 +10,109 @@ import support/bitcoin_wire
 import support/offset_bit_array
 import support/target
 
-// Exact wire bytes, decimal representation, native safety on JS runtimes, money range.
+type OutputValueCase {
+  OutputValueCase(
+    bytes_le: BitArray,
+    decimal: String,
+    is_safe_on_js: Bool,
+    is_in_money_range: Bool,
+  )
+}
+
 const values = [
-  #(<<0:64>>, "0", True, True),
-  #(<<0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF>>, "-1", True, False),
-  #(<<2_100_000_000_000_000:64-little>>, "2100000000000000", True, True),
-  #(<<2_100_000_000_000_001:64-little>>, "2100000000000001", True, False),
-  #(
-    <<0xFE, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0x1F, 0>>,
-    "9007199254740990",
-    True,
-    False,
+  OutputValueCase(
+    bytes_le: <<0:64>>,
+    decimal: "0",
+    is_safe_on_js: True,
+    is_in_money_range: True,
   ),
-  #(
-    <<0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0x1F, 0>>,
-    "9007199254740991",
-    True,
-    False,
+  OutputValueCase(
+    bytes_le: <<0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF>>,
+    decimal: "-1",
+    is_safe_on_js: True,
+    is_in_money_range: False,
   ),
-  #(<<1, 0, 0, 0, 0, 0, 0xE0, 0xFF>>, "-9007199254740991", True, False),
-  #(<<2, 0, 0, 0, 0, 0, 0xE0, 0xFF>>, "-9007199254740990", True, False),
-  #(<<0, 0, 0, 0, 0, 0, 0x20, 0>>, "9007199254740992", False, False),
-  #(<<0, 0, 0, 0, 0, 0, 0xE0, 0xFF>>, "-9007199254740992", False, False),
-  #(<<1, 0, 0, 0, 0, 0, 0x20, 0>>, "9007199254740993", False, False),
-  #(
-    <<0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xDF, 0xFF>>,
-    "-9007199254740993",
-    False,
-    False,
+  OutputValueCase(
+    bytes_le: <<2_100_000_000_000_000:64-little>>,
+    decimal: "2100000000000000",
+    is_safe_on_js: True,
+    is_in_money_range: True,
   ),
-  #(
-    <<0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0x7F>>,
-    "9223372036854775807",
-    False,
-    False,
+  OutputValueCase(
+    bytes_le: <<2_100_000_000_000_001:64-little>>,
+    decimal: "2100000000000001",
+    is_safe_on_js: True,
+    is_in_money_range: False,
   ),
-  #(<<0, 0, 0, 0, 0, 0, 0, 0x80>>, "-9223372036854775808", False, False),
+  OutputValueCase(
+    bytes_le: <<0xFE, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0x1F, 0>>,
+    decimal: "9007199254740990",
+    is_safe_on_js: True,
+    is_in_money_range: False,
+  ),
+  OutputValueCase(
+    bytes_le: <<0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0x1F, 0>>,
+    decimal: "9007199254740991",
+    is_safe_on_js: True,
+    is_in_money_range: False,
+  ),
+  OutputValueCase(
+    bytes_le: <<1, 0, 0, 0, 0, 0, 0xE0, 0xFF>>,
+    decimal: "-9007199254740991",
+    is_safe_on_js: True,
+    is_in_money_range: False,
+  ),
+  OutputValueCase(
+    bytes_le: <<2, 0, 0, 0, 0, 0, 0xE0, 0xFF>>,
+    decimal: "-9007199254740990",
+    is_safe_on_js: True,
+    is_in_money_range: False,
+  ),
+  OutputValueCase(
+    bytes_le: <<0, 0, 0, 0, 0, 0, 0x20, 0>>,
+    decimal: "9007199254740992",
+    is_safe_on_js: False,
+    is_in_money_range: False,
+  ),
+  OutputValueCase(
+    bytes_le: <<0, 0, 0, 0, 0, 0, 0xE0, 0xFF>>,
+    decimal: "-9007199254740992",
+    is_safe_on_js: False,
+    is_in_money_range: False,
+  ),
+  OutputValueCase(
+    bytes_le: <<1, 0, 0, 0, 0, 0, 0x20, 0>>,
+    decimal: "9007199254740993",
+    is_safe_on_js: False,
+    is_in_money_range: False,
+  ),
+  OutputValueCase(
+    bytes_le: <<0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xDF, 0xFF>>,
+    decimal: "-9007199254740993",
+    is_safe_on_js: False,
+    is_in_money_range: False,
+  ),
+  OutputValueCase(
+    bytes_le: <<0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0x7F>>,
+    decimal: "9223372036854775807",
+    is_safe_on_js: False,
+    is_in_money_range: False,
+  ),
+  OutputValueCase(
+    bytes_le: <<0, 0, 0, 0, 0, 0, 0, 0x80>>,
+    decimal: "-9223372036854775808",
+    is_safe_on_js: False,
+    is_in_money_range: False,
+  ),
 ]
 
 pub fn output_values_preserve_full_signed_range_and_checked_conversions_test() {
   values
   |> list.each(fn(row) {
     let inputs = [bitcoin_wire.build_input_bytes(<<0:256>>, 0, <<>>, 0)]
-    let #(bytes, decimal, safe_on_js, _) = row
     let tx_bytes =
       bitcoin_wire.assemble_legacy_transaction_bytes(inputs, [
-        bitcoin_wire.build_output_bytes(bytes, <<>>),
+        bitcoin_wire.build_output_bytes(row.bytes_le, <<>>),
       ])
 
     [tx_bytes, offset_bit_array.with_one_bit_offset(tx_bytes)]
@@ -64,13 +121,13 @@ pub fn output_values_preserve_full_signed_range_and_checked_conversions_test() {
       let assert [output] = transaction.get_outputs(tx)
       let value: OutputValue = transaction.get_output_value(output)
 
-      assert transaction.output_value_to_bytes_le(value) == bytes
-      assert transaction.output_value_to_string(value) == decimal
+      assert transaction.output_value_to_bytes_le(value) == row.bytes_le
+      assert transaction.output_value_to_string(value) == row.decimal
       assert transaction.serialize(tx) == tx_bytes
 
-      let expected = case target.is_javascript() && !safe_on_js {
+      let expected = case target.is_javascript() && !row.is_safe_on_js {
         True -> Error(Nil)
-        False -> int.parse(decimal)
+        False -> int.parse(row.decimal)
       }
       assert transaction.output_value_to_int(value) == expected
     })
@@ -81,15 +138,14 @@ pub fn output_value_consensus_errors_preserve_exact_amounts_test() {
   values
   |> list.each(fn(row) {
     let inputs = [bitcoin_wire.build_input_bytes(<<0:256>>, 0, <<>>, 0)]
-    let #(bytes, decimal, _, in_money_range) = row
 
     let assert Ok(tx) =
       bitcoin_wire.assemble_legacy_transaction_bytes(inputs, [
-        bitcoin_wire.build_output_bytes(bytes, <<>>),
+        bitcoin_wire.build_output_bytes(row.bytes_le, <<>>),
       ])
       |> transaction.deserialize
 
-    case in_money_range {
+    case row.is_in_money_range {
       True -> {
         let assert Ok(validated_tx) =
           transaction.validate_context_free_consensus(tx)
@@ -97,14 +153,14 @@ pub fn output_value_consensus_errors_preserve_exact_amounts_test() {
         assert transaction.output_value_to_int(transaction.get_output_value(
             output,
           ))
-          == int.parse(decimal)
+          == int.parse(row.decimal)
       }
 
       False -> {
         let assert Error([OutputValueOutOfRange(0, value)]) =
           transaction.validate_context_free_consensus(tx)
-        assert transaction.output_value_to_bytes_le(value) == bytes
-        assert transaction.output_value_to_string(value) == decimal
+        assert transaction.output_value_to_bytes_le(value) == row.bytes_le
+        assert transaction.output_value_to_string(value) == row.decimal
       }
     }
   })
@@ -114,7 +170,7 @@ pub fn legacy_and_segwit_serialization_and_hashes_preserve_extreme_amounts_test(
   values
   |> list.each(fn(row) {
     let inputs = [bitcoin_wire.build_input_bytes(<<0:256>>, 0, <<>>, 0)]
-    let outputs = [bitcoin_wire.build_output_bytes(row.0, <<>>)]
+    let outputs = [bitcoin_wire.build_output_bytes(row.bytes_le, <<>>)]
     let stripped =
       bitcoin_wire.assemble_legacy_transaction_bytes(inputs, outputs)
     let segwit =
