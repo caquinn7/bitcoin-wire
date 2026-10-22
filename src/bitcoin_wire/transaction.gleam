@@ -4,7 +4,7 @@ import bitcoin_wire/hash256.{type Hash256}
 import bitcoin_wire/internal/compact_size
 import bitcoin_wire/internal/decode
 import bitcoin_wire/internal/double_sha256
-import bitcoin_wire/internal/fixed_int/int64
+import bitcoin_wire/internal/fixed_int/int64.{type Int64}
 import bitcoin_wire/internal/fixed_int/uint64.{type Uint64}
 import bitcoin_wire/internal/hex
 import bitcoin_wire/internal/lifecycle
@@ -667,7 +667,7 @@ pub fn get_witness_item_bytes(item: WitnessItem) -> BitArray {
 pub opaque type Output {
   Output(
     /// The signed output value in satoshis decoded from the wire.
-    value: Int,
+    value: OutputValue,
     /// The raw scriptPubKey bytes for this output.
     script_pubkey: ScriptBytes(OutputScript),
   )
@@ -678,7 +678,7 @@ pub opaque type Output {
 /// For an output from a `Transaction(Parsed)`, this value may be negative or
 /// exceed Bitcoin's consensus money range. Use
 /// `validate_context_free_consensus` to check the transaction's output values.
-pub fn get_output_value(output: Output) -> Int {
+pub fn get_output_value(output: Output) -> OutputValue {
   output.value
 }
 
@@ -688,6 +688,49 @@ pub fn get_output_value(output: Output) -> Int {
 /// exposes the script bytes without executing or validating them.
 pub fn get_output_script_pubkey(output: Output) -> ScriptBytes(OutputScript) {
   output.script_pubkey
+}
+
+/// A signed 64-bit output amount in satoshis, stored as exact wire bytes.
+///
+/// Every signed 64-bit value is preserved exactly on both Erlang and JavaScript
+/// targets, including negative amounts and amounts above Bitcoin's consensus
+/// money range. This type does not establish consensus validity.
+///
+/// Use `output_value_to_string` or `output_value_to_bytes_le` for exact,
+/// portable representations, or `output_value_to_int` for a checked native
+/// integer conversion.
+pub opaque type OutputValue {
+  OutputValue(Int64)
+}
+
+/// Return an output amount's exact eight bytes in little-endian wire order.
+pub fn output_value_to_bytes_le(value: OutputValue) -> BitArray {
+  let OutputValue(value) = value
+  int64.to_bytes_le(value)
+}
+
+/// Return an output amount's exact signed base-10 representation.
+///
+/// This preserves the full value on both Erlang and JavaScript targets,
+/// including amounts outside Bitcoin's consensus money range.
+pub fn output_value_to_string(value: OutputValue) -> String {
+  let OutputValue(value) = value
+  int64.to_string(value)
+}
+
+/// Attempt to convert an output amount to a native integer.
+///
+/// Always succeeds on the Erlang target. On the JavaScript target, succeeds
+/// only within the safe integer range `-9_007_199_254_740_991` through
+/// `9_007_199_254_740_991`, inclusive; otherwise returns `Error(Nil)` without
+/// rounding the amount.
+///
+/// This conversion does not check Bitcoin's consensus money range. Output
+/// amounts from a transaction that passed `validate_context_free_consensus`
+/// are guaranteed to convert successfully on both targets.
+pub fn output_value_to_int(value: OutputValue) -> Result(Int, Nil) {
+  let OutputValue(value) = value
+  int64.to_int(value)
 }
 
 /// Phantom type tag for `ScriptBytes` — marks bytes from an input's scriptSig.
@@ -1974,28 +2017,15 @@ fn output_parser() -> Parser(ParseContext, Output, DecodeError) {
   // | value (8 bytes)
   // | scriptPubKey length (CompactSize)
   // | scriptPubKey bytes
-  parser.map2(satoshis_parser(), script_pubkey_parser(), Output)
+  parser.map2(output_value_parser(), script_pubkey_parser(), Output)
 }
 
-fn satoshis_parser() -> Parser(ParseContext, Int, DecodeError) {
+fn output_value_parser() -> Parser(ParseContext, OutputValue, DecodeError) {
   Value
   |> field_parser(reader.read_bytes(_, 8))
   |> parser.map(fn(value_bytes) {
     let assert Ok(value_i64) = int64.from_bytes_le(value_bytes)
-    value_i64
-  })
-  |> parser.try_with_start_offset(fn(value_i64, start_offset, _reader, ctx) {
-    // This should never happen.
-    // The max possible amount of satoshis 2_100_000_000_000_000 (2.1 quadrillion)
-    // is less than JavaScript's Number.MAX_SAFE_INTEGER
-    value_i64
-    |> int64.to_int
-    |> result.map_error(fn(_) {
-      value_i64
-      |> int64.to_string
-      |> IntegerOutOfRange
-      |> field_error(Value, start_offset, ctx)
-    })
+    OutputValue(value_i64)
   })
 }
 
@@ -2330,8 +2360,9 @@ pub type ConsensusViolation {
   /// The upper bound is 21,000,000 BTC expressed in satoshis.
   ///
   /// The `index` field indicates the zero-based position of the output,
-  /// and `value` is the invalid amount.
-  OutputValueOutOfRange(index: Int, value: Int)
+  /// and `value` preserves the invalid signed 64-bit amount exactly. Use
+  /// `output_value_to_string` to display it without native integer limits.
+  OutputValueOutOfRange(index: Int, value: OutputValue)
 
   /// The cumulative sum of output values exceeds the valid money range.
   ///
@@ -2342,7 +2373,9 @@ pub type ConsensusViolation {
   /// The `index` field indicates the zero-based position of the output
   /// at which the running total first exceeded 2,100,000,000,000,000 satoshis.
   ///
-  /// The `total` field is the cumulative output value at that point.
+  /// The `total` field is the cumulative output value at that point. Individual
+  /// amounts are checked first, so the first excessive total is at most twice
+  /// the maximum money amount and fits exactly in `Int` on both targets.
   TotalOutputValueOutOfRange(index: Int, total: Int)
 
   /// A transaction identified as a coinbase transaction contains
@@ -2482,16 +2515,22 @@ fn validate_output_values_loop(
     [] -> Ok(Nil)
 
     [output, ..rest] ->
-      case output.value {
-        v if v < 0 -> Error(OutputValueOutOfRange(index, v))
-        v if v > max_satoshis -> Error(OutputValueOutOfRange(index, v))
-        v -> {
+      case output_value_to_int(output.value) {
+        Ok(v) if v < 0 -> Error(OutputValueOutOfRange(index, output.value))
+        Ok(v) if v > max_satoshis ->
+          Error(OutputValueOutOfRange(index, output.value))
+        Ok(v) -> {
+          // Both operands are at most max_satoshis before addition. Even the first
+          // excessive total is at most 2 * max_satoshis and remains exact on JavaScript.
           let sum = sum + v
           case sum > max_satoshis {
             True -> Error(TotalOutputValueOutOfRange(index, sum))
             False -> validate_output_values_loop(rest, index + 1, sum)
           }
         }
+        // max_satoshis fits in JavaScript's safe integer range, so a failed native
+        // conversion is necessarily outside the consensus money range.
+        Error(Nil) -> Error(OutputValueOutOfRange(index, output.value))
       }
   }
 }
@@ -2673,7 +2712,7 @@ fn collect_output_parts(
       let script_pubkey_length = bit_array.byte_size(script_pubkey_bytes)
 
       let parts = [
-        <<output.value:64-little>>,
+        output_value_to_bytes_le(output.value),
         compact_size.encode_int(script_pubkey_length),
         script_pubkey_bytes,
         ..parts

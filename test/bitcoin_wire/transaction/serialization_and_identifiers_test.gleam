@@ -1,9 +1,8 @@
 import bitcoin_wire/hash256
 import bitcoin_wire/transaction.{NoOutputs}
 import gleam/bit_array
-import gleam/crypto.{Sha256}
 import support/bitcoin_wire
-import support/target
+import support/crypto.{dsha256}
 
 // ============================================================================
 // Transaction size and weight computation
@@ -140,39 +139,34 @@ pub fn serialize_stripped_preserves_signed_and_large_output_values_test() {
   assert transaction.serialize_stripped(tx) == tx_bytes
 }
 
-pub fn serialize_stripped_preserves_i64_boundary_output_values_on_erlang_test() {
-  case target.is_javascript() {
-    True -> Nil
-    False -> {
-      let input =
-        bitcoin_wire.build_input_bytes(
-          bitcoin_wire.repeat_byte(0x11, 32),
-          1,
-          <<>>,
-          0xFFFFFFFF,
-        )
-      let min_i64_output =
-        bitcoin_wire.build_output_bytes(<<0, 0, 0, 0, 0, 0, 0, 0x80>>, <<>>)
-      let max_i64_output =
-        bitcoin_wire.build_output_bytes(
-          <<0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0x7F>>,
-          <<>>,
-        )
-      let tx_bytes = <<
-        bitcoin_wire.transaction_version_1_bytes:bits,
-        bitcoin_wire.compact_size(1):bits,
-        input:bits,
-        bitcoin_wire.compact_size(2):bits,
-        min_i64_output:bits,
-        max_i64_output:bits,
-        0:32-little,
-      >>
+pub fn serialize_stripped_preserves_i64_boundary_output_values_test() {
+  let input =
+    bitcoin_wire.build_input_bytes(
+      bitcoin_wire.repeat_byte(0x11, 32),
+      1,
+      <<>>,
+      0xFFFFFFFF,
+    )
+  let min_i64_output =
+    bitcoin_wire.build_output_bytes(<<0, 0, 0, 0, 0, 0, 0, 0x80>>, <<>>)
+  let max_i64_output =
+    bitcoin_wire.build_output_bytes(
+      <<0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0x7F>>,
+      <<>>,
+    )
+  let tx_bytes = <<
+    bitcoin_wire.transaction_version_1_bytes:bits,
+    bitcoin_wire.compact_size(1):bits,
+    input:bits,
+    bitcoin_wire.compact_size(2):bits,
+    min_i64_output:bits,
+    max_i64_output:bits,
+    0:32-little,
+  >>
 
-      let assert Ok(tx) = transaction.deserialize(tx_bytes)
+  let assert Ok(tx) = transaction.deserialize(tx_bytes)
 
-      assert transaction.serialize_stripped(tx) == tx_bytes
-    }
-  }
+  assert transaction.serialize_stripped(tx) == tx_bytes
 }
 
 pub fn serialize_and_hashing_accept_context_free_invalid_segwit_tx_test() {
@@ -207,15 +201,8 @@ pub fn serialize_and_hashing_accept_context_free_invalid_segwit_tx_test() {
   assert transaction.serialize_stripped(tx) == stripped_bytes
   assert transaction.serialize(tx) == wire_bytes
 
-  let expected_txid =
-    stripped_bytes
-    |> crypto.hash(Sha256, _)
-    |> crypto.hash(Sha256, _)
-
-  let expected_wtxid =
-    wire_bytes
-    |> crypto.hash(Sha256, _)
-    |> crypto.hash(Sha256, _)
+  let expected_txid = dsha256(stripped_bytes)
+  let expected_wtxid = dsha256(wire_bytes)
 
   assert tx
     |> transaction.compute_txid
@@ -254,10 +241,7 @@ pub fn compute_txid_matches_manual_dsha256_test() {
     lock_time:bits,
   >>
 
-  let expected_txid =
-    tx_bytes
-    |> crypto.hash(Sha256, _)
-    |> crypto.hash(Sha256, _)
+  let expected_txid = dsha256(tx_bytes)
 
   let assert Ok(tx) = transaction.deserialize(tx_bytes)
   let txid = transaction.compute_txid(tx)
@@ -289,10 +273,7 @@ pub fn compute_wtxid_matches_manual_dsha256_test() {
     ])
 
   // wtxid hashes extended serialization, including witness data.
-  let expected_wtxid =
-    tx_bytes
-    |> crypto.hash(Sha256, _)
-    |> crypto.hash(Sha256, _)
+  let expected_wtxid = dsha256(tx_bytes)
 
   let assert Ok(tx) = transaction.deserialize(tx_bytes)
   let wtxid = transaction.compute_wtxid(tx)

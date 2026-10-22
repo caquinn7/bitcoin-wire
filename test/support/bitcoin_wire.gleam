@@ -133,6 +133,23 @@ pub fn build_witness_stack_bytes(items: List(BitArray)) -> BitArray {
   bit_array.concat([item_count, ..fragments])
 }
 
+/// Assemble legacy transaction bytes from encoded components without validating them.
+///
+/// Uses version 1 and lock time 0, deriving both CompactSize counts from the lists.
+pub fn assemble_legacy_transaction_bytes(
+  inputs: List(BitArray),
+  outputs: List(BitArray),
+) -> BitArray {
+  <<
+    transaction_version_1_bytes:bits,
+    compact_size(list.length(inputs)):bits,
+    bit_array.concat(inputs):bits,
+    compact_size(list.length(outputs)):bits,
+    bit_array.concat(outputs):bits,
+    0:little-size(32),
+  >>
+}
+
 /// Assemble SegWit transaction bytes from encoded components without validating them.
 pub fn assemble_segwit_transaction_bytes(
   inputs: List(BitArray),

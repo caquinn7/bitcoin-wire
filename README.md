@@ -53,7 +53,8 @@ gleam add bitcoin_wire@1
 ### Cross-runtime portability
 
 > Public behavior remains consistent across the supported runtimes:
-> Erlang and Node.js.
+> Erlang and Node.js. However, native integer conversions and decode diagnostics
+> may differ according to runtime representation limits.
 
 Native browser builds are not currently supported. The JavaScript hashing
 implementation imports `node:crypto`, which is available in Node.js but not

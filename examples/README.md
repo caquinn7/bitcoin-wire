@@ -54,3 +54,7 @@ the parser's byte offset, structural path, and kind-specific details as JSON.
   guaranteed by this repository.
 - Identifiers and hashes in JSON use Bitcoin's conventional display byte order.
   Raw `bitcoin_wire` hash values preserve wire byte order.
+- Output amounts and aggregate totals remain JSON numbers. These Erlang-only
+  examples use checked `transaction.output_value_to_int` conversions and rely
+  on Erlang's arbitrary-precision integers. Portable consumers can use
+  `transaction.output_value_to_string` to retain exact amounts as decimal text.

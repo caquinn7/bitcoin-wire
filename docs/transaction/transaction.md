@@ -57,6 +57,35 @@ the same little-endian order used on the Bitcoin wire. Use
 `hash256.to_display_hex` for conventional explorer notation or
 `hash256.to_bytes_le` for the exact 32 wire-order bytes.
 
+## Output Values
+
+Bitcoin's wire format encodes output values as signed 64-bit integers. Consensus
+permits only non-negative amounts within Bitcoin's money range. To model the
+wire format faithfully, `OutputValue` preserves the full signed range exactly on
+Erlang and JavaScript; `validate_context_free_consensus` checks the monetary
+constraints separately.
+
+`get_output_value` returns an opaque `OutputValue`. Use the conversion helpers
+to display it, inspect its wire bytes, or attempt native integer conversion:
+
+```gleam
+import bitcoin_wire/transaction
+import gleam/int
+import gleam/io
+
+let value = transaction.get_output_value(output)
+let wire_bytes = transaction.output_value_to_bytes_le(value)
+
+case transaction.output_value_to_int(value) {
+  Ok(satoshis) ->
+    io.println("Native integer amount: " <> int.to_string(satoshis))
+  Error(Nil) -> {
+    let decimal_satoshis = transaction.output_value_to_string(value)
+    io.println("Amount outside the native integer range: " <> decimal_satoshis)
+  }
+}
+```
+
 ## Decode Policy
 
 `deserialize` and `deserialize_hex` apply these defaults:

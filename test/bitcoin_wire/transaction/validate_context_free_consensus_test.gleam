@@ -1,7 +1,7 @@
 import bitcoin_wire/transaction.{
-  BaseSizeLimitExceeded, CoinbaseWithMultipleInputs, DuplicateInput,
-  InvalidCoinbaseScriptSigLength, NoInputs, NoOutputs, OutputValueOutOfRange,
-  TotalOutputValueOutOfRange,
+  type OutputValue, BaseSizeLimitExceeded, CoinbaseWithMultipleInputs,
+  DuplicateInput, InvalidCoinbaseScriptSigLength, NoInputs, NoOutputs,
+  OutputValueOutOfRange, TotalOutputValueOutOfRange,
 }
 import gleam/bit_array
 import gleam/list
@@ -110,7 +110,7 @@ pub fn validate_context_free_consensus_reports_base_size_before_monetary_violati
   assert transaction.validate_context_free_consensus(tx)
     == Error([
       BaseSizeLimitExceeded(stripped_size),
-      OutputValueOutOfRange(0, -1),
+      OutputValueOutOfRange(0, encoded_output_value(-1)),
     ])
 }
 
@@ -136,7 +136,7 @@ pub fn validate_context_free_consensus_rejects_tx_with_negative_output_value_tes
   let assert Ok(tx) = transaction.deserialize(tx_bytes)
 
   assert transaction.validate_context_free_consensus(tx)
-    == Error([OutputValueOutOfRange(0, -1)])
+    == Error([OutputValueOutOfRange(0, encoded_output_value(-1))])
 }
 
 pub fn validate_context_free_consensus_rejects_tx_with_output_exceeding_supply_test() {
@@ -160,7 +160,9 @@ pub fn validate_context_free_consensus_rejects_tx_with_output_exceeding_supply_t
   let assert Ok(tx) = transaction.deserialize(tx_bytes)
 
   assert transaction.validate_context_free_consensus(tx)
-    == Error([OutputValueOutOfRange(0, 2_100_000_000_000_001)])
+    == Error([
+      OutputValueOutOfRange(0, encoded_output_value(2_100_000_000_000_001)),
+    ])
 }
 
 pub fn validate_context_free_consensus_accepts_tx_with_total_outputs_equal_to_supply_test() {
@@ -454,7 +456,10 @@ pub fn validate_context_free_consensus_returns_multiple_errors_test() {
   let assert Error(errors) = transaction.validate_context_free_consensus(tx)
 
   assert list.contains(errors, CoinbaseWithMultipleInputs)
-  assert list.contains(errors, OutputValueOutOfRange(0, -1))
+  assert list.contains(
+    errors,
+    OutputValueOutOfRange(0, encoded_output_value(-1)),
+  )
   assert list.length(errors) == 2
 }
 
@@ -572,7 +577,10 @@ pub fn validate_context_free_consensus_duplicate_input_reported_alongside_other_
   let duplicate_outpoint = transaction.get_input_outpoint(input0)
 
   let assert Error(errors) = transaction.validate_context_free_consensus(tx)
-  assert list.contains(errors, OutputValueOutOfRange(0, -1))
+  assert list.contains(
+    errors,
+    OutputValueOutOfRange(0, encoded_output_value(-1)),
+  )
   assert list.contains(errors, DuplicateInput(duplicate_outpoint, 0, 1))
   assert list.length(errors) == 2
 }
@@ -667,4 +675,16 @@ fn legacy_tx_with_stripped_size(
 fn large_transaction_policy(tx_bytes: BitArray) {
   transaction.default_decode_policy()
   |> transaction.decode_policy_with_max_tx_size(bit_array.byte_size(tx_bytes))
+}
+
+// Expected amounts here fit safely in Int on both targets.
+fn encoded_output_value(value: Int) -> OutputValue {
+  let assert Ok(tx) =
+    bitcoin_wire.assemble_legacy_transaction_bytes(
+      [bitcoin_wire.build_input_bytes(<<0:256>>, 0, <<>>, 0)],
+      [bitcoin_wire.build_output_bytes(<<value:64-little>>, <<>>)],
+    )
+    |> transaction.deserialize
+  let assert [output] = transaction.get_outputs(tx)
+  transaction.get_output_value(output)
 }

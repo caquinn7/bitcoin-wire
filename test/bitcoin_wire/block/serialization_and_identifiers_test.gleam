@@ -1,8 +1,8 @@
 import bitcoin_wire/block
 import bitcoin_wire/hash256
-import gleam/crypto.{Sha256}
 import gleam/list
 import support/bitcoin_wire
+import support/crypto.{dsha256}
 
 // ============================================================================
 // serialize_header
@@ -307,10 +307,7 @@ pub fn compute_block_hash_matches_manual_dsha256_test() {
   let assert Ok(block) =
     block.deserialize(bitcoin_wire.assemble_block_bytes(header_bytes, [tx]))
 
-  let expected_hash =
-    header_bytes
-    |> crypto.hash(Sha256, _)
-    |> crypto.hash(Sha256, _)
+  let expected_hash = dsha256(header_bytes)
 
   assert block
     |> block.get_header

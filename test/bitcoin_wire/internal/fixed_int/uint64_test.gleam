@@ -33,11 +33,19 @@ pub fn from_bytes_le_returns_ok_when_input_is_8_bytes_test() {
 
 // to_bytes_le
 
-pub fn to_bytes_le_returns_bytes_test() {
+pub fn to_bytes_le_preserves_bytes_test() {
   let bytes = shared_inputs.one_bytes
   let assert Ok(x) = uint64.from_bytes_le(bytes)
 
   assert uint64.to_bytes_le(x) == bytes
+}
+
+pub fn to_bytes_le_preserves_offset_bytes_test() {
+  let bytes = <<0x01, 0x23, 0x45, 0x67, 0x89, 0xAB, 0xCD, 0xEF>>
+  let view = offset_bit_array.with_one_bit_offset(bytes)
+  let assert Ok(value) = uint64.from_bytes_le(view)
+
+  assert uint64.to_bytes_le(value) == bytes
 }
 
 // to_int

@@ -11,10 +11,10 @@ import bitcoin_wire/transaction.{
   NoOutputs,
 }
 import gleam/bit_array
-import gleam/crypto.{Sha256}
 import gleam/int
 import gleam/list
 import support/bitcoin_wire
+import support/crypto.{dsha256}
 
 const regtest_pow_limit_bytes = <<
   0xFF,
@@ -711,6 +711,37 @@ pub fn validate_context_free_consensus_upgrades_valid_transactions_and_preserves
   assert !transaction.has_coinbase_shape(validated_regular)
 }
 
+pub fn block_round_trip_and_validation_preserve_exact_output_value_test() {
+  // 9_007_199_254_740_993 cannot be represented exactly as a JavaScript Int.
+  let value_bytes = <<1, 0, 0, 0, 0, 0, 0x20, 0>>
+  let regular_tx =
+    bitcoin_wire.assemble_legacy_transaction_bytes(
+      [bitcoin_wire.build_input_bytes(<<0:256>>, 0, <<>>, 0)],
+      [bitcoin_wire.build_output_bytes(value_bytes, <<>>)],
+    )
+  let block_bytes =
+    build_mined_regtest_block_bytes([
+      build_valid_coinbase_legacy_transaction_bytes(1),
+      regular_tx,
+    ])
+
+  let assert Ok(parsed_block) = block.deserialize(block_bytes)
+  assert block.serialize(parsed_block) == block_bytes
+
+  let assert [_, tx] = block.get_transactions(parsed_block)
+  let assert [output] = transaction.get_outputs(tx)
+  assert transaction.output_value_to_bytes_le(transaction.get_output_value(
+      output,
+    ))
+    == value_bytes
+
+  let assert Error([
+    InvalidTransaction(1, [transaction.OutputValueOutOfRange(0, value)]),
+  ]) = block.validate_context_free_consensus(parsed_block, regtest_pow_limit())
+  assert transaction.output_value_to_string(value) == "9007199254740993"
+  assert transaction.output_value_to_bytes_le(value) == value_bytes
+}
+
 // ============================================================================
 // Helpers
 // ============================================================================
@@ -836,12 +867,6 @@ fn compute_merkle_root_from_hashes(hashes: List(BitArray)) -> BitArray {
       })
       |> compute_merkle_root_from_hashes
   }
-}
-
-fn dsha256(bytes: BitArray) -> BitArray {
-  bytes
-  |> crypto.hash(Sha256, _)
-  |> crypto.hash(Sha256, _)
 }
 
 fn build_valid_legacy_transaction_bytes(

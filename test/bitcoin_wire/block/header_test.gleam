@@ -3,8 +3,8 @@ import bitcoin_wire/block.{
 }
 import bitcoin_wire/hash256
 import gleam/bit_array
-import gleam/crypto.{Sha256}
 import support/bitcoin_wire
+import support/crypto.{dsha256}
 
 // ============================================================================
 // deserialize_header
@@ -132,10 +132,7 @@ pub fn compute_block_hash_matches_genesis_display_and_manual_dsha256_test() {
   >>
 
   let assert Ok(header) = block.deserialize_header(genesis_header_bytes)
-  let expected_hash =
-    genesis_header_bytes
-    |> crypto.hash(Sha256, _)
-    |> crypto.hash(Sha256, _)
+  let expected_hash = dsha256(genesis_header_bytes)
   let actual_hash = block.compute_block_hash(header)
 
   assert block.serialize_header(header) == genesis_header_bytes
@@ -148,10 +145,7 @@ pub fn compute_block_hash_hashes_a_header_from_a_complete_block_test() {
   let header_bytes = sample_header_bytes()
   let assert Ok(parsed_block) =
     block.deserialize(bitcoin_wire.assemble_block_bytes(header_bytes, []))
-  let expected_hash =
-    header_bytes
-    |> crypto.hash(Sha256, _)
-    |> crypto.hash(Sha256, _)
+  let expected_hash = dsha256(header_bytes)
 
   assert block.compute_block_hash(block.get_header(parsed_block))
     |> hash256.to_bytes_le
