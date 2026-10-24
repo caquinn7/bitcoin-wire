@@ -2,8 +2,8 @@
 
 Bitcoin transaction and block wire formats for Gleam.
 
-<!-- [![Package Version](https://img.shields.io/hexpm/v/bitcoin_wire)](https://hex.pm/packages/bitcoin_wire)
-[![Hex Docs](https://img.shields.io/badge/hex-docs-ffaff3)](https://hexdocs.pm/bitcoin_wire/) -->
+[![Package Version](https://img.shields.io/hexpm/v/bitcoin_wire)](https://hex.pm/packages/bitcoin_wire)
+[![Hex Docs](https://img.shields.io/badge/hex-docs-ffaff3)](https://hexdocs.pm/bitcoin_wire/)
 
 `bitcoin_wire` is a Gleam library for deserializing, inspecting, hashing,
 serializing, and performing context-free consensus checks on Bitcoin
@@ -28,10 +28,11 @@ The following Bitcoin wire-format data structures are currently implemented:
 
 Additional domains may be added as the library expands.
 
-<!-- ## Installation
+## Installation
+
 ```sh
 gleam add bitcoin_wire@1
-``` -->
+```
 
 ## Goals and Philosophy
 
@@ -93,7 +94,7 @@ gleam test -t javascript --runtime node
 
 ### Continuous Integration
 
-Pull requests and pushes to `main` run one workflow per project:
+Pull requests run one workflow per project:
 
 | Workflow | Checks |
 | --- | --- |
@@ -112,11 +113,9 @@ and table reporting for transactions and blocks. They do not enforce performance
 thresholds; use the performance harness's comparison runner for measured
 regression claims.
 
-At 1 a.m. Central (`America/Chicago`), the separate `fuzz-nightly` workflow runs
-longer transaction and block fuzz suites on Erlang and Node with a shared
-generated seed if `main` differs from its latest successful scheduled run.
-Unchanged successful commits are skipped, and failed runs are retried the
-following night. The schedule follows Central daylight saving time.
+A separate `fuzz-nightly` workflow runs longer transaction and block fuzz suites
+on Erlang and Node with a shared generated seed if `main` differs from its latest successful scheduled run. Unchanged successful commits are skipped, and failed
+runs are retried the following night.
 
 ### Fuzz Testing
 
